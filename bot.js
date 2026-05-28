@@ -2,7 +2,7 @@ const {
   Client, GatewayIntentBits, EmbedBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
-  ChannelType, Events, REST, Routes, SlashCommandBuilder, PermissionFlagsBits
+  ChannelType, Events, REST, Routes, SlashCommandBuilder, PermissionFlagsBits, MessageFlags
 } = require('discord.js');
 
 require('dotenv').config();
@@ -373,7 +373,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   // ── /postshop ──────────────────────────────
   if (interaction.isChatInputCommand() && interaction.commandName === 'postshop') {
     if (!isAdmin(interaction.member))
-      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     const shopMessage = await interaction.channel.send({
       embeds: [buildShopEmbed()],
@@ -391,19 +391,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
     lastShopMessageId = shopMessage.id;
     lastShopChannelId = interaction.channel.id;
 
-    return interaction.reply({ content: '✅ Shop posted!', ephemeral: true });
+    return interaction.reply({ content: '✅ Shop posted!', flags: MessageFlags.Ephemeral });
   }
 
   // ── /stock ─────────────────────────────────
   if (interaction.isChatInputCommand() && interaction.commandName === 'stock') {
     if (!isAdmin(interaction.member))
-      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     const fruit  = interaction.options.getString('fruit').toLowerCase();
     const amount = interaction.options.getInteger('amount');
 
     if (!inventory[fruit])
-      return interaction.reply({ content: `❌ Unknown fruit: \`${fruit}\``, ephemeral: true });
+      return interaction.reply({ content: `❌ Unknown fruit: \`${fruit}\``, flags: MessageFlags.Ephemeral });
 
     inventory[fruit].stock = amount;
     inventory[fruit].reserved = Math.min(inventory[fruit].reserved || 0, amount);
@@ -414,21 +414,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     return interaction.reply({
       content: `✅ **${fruit}** stock updated to **${amount}**. (saved to file)`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 
   // ── /bulkstock ──────────────────────────────
   if (interaction.isChatInputCommand() && interaction.commandName === 'bulkstock') {
     if (!isAdmin(interaction.member))
-      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     const allFruits = Object.entries(inventory);
     
     if (allFruits.length === 0) {
       return interaction.reply({
         content: 'No fruits in inventory!',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -457,7 +457,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (allFruits.length > 5) {
       return interaction.reply({
         content: `⚠️ You have ${allFruits.length} fruits total. Form shows first 5. For others, use \`/stock\` command.`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -467,14 +467,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
   // ── /addfruit ──────────────────────────────
   if (interaction.isChatInputCommand() && interaction.commandName === 'addfruit') {
     if (!isAdmin(interaction.member))
-      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     const name  = interaction.options.getString('name').toLowerCase();
     const price = interaction.options.getInteger('price');
     const stock = interaction.options.getInteger('stock');
 
     if (inventory[name])
-      return interaction.reply({ content: `❌ **${name}** already exists in inventory!`, ephemeral: true });
+      return interaction.reply({ content: `❌ **${name}** already exists in inventory!`, flags: MessageFlags.Ephemeral });
 
     inventory[name] = { price, stock };
     saveState();  // SAVE TO FILE
@@ -484,20 +484,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     return interaction.reply({
       content: `✅ **${name}** added to shop! Price: ₱${price} | Stock: ${stock} (saved to file)`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 
   // ── /editprice ─────────────────────────────
   if (interaction.isChatInputCommand() && interaction.commandName === 'editprice') {
     if (!isAdmin(interaction.member))
-      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     const fruit = interaction.options.getString('fruit').toLowerCase();
     const price = interaction.options.getInteger('price');
 
     if (!inventory[fruit])
-      return interaction.reply({ content: `❌ Unknown fruit: \`${fruit}\``, ephemeral: true });
+      return interaction.reply({ content: `❌ Unknown fruit: \`${fruit}\``, flags: MessageFlags.Ephemeral });
 
     const oldPrice = inventory[fruit].price;
     inventory[fruit].price = price;
@@ -508,19 +508,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     return interaction.reply({
       content: `✅ **${fruit}** price updated: ₱${oldPrice} → ₱${price} (saved to file)`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 
   // ── /removefruit ───────────────────────────
   if (interaction.isChatInputCommand() && interaction.commandName === 'removefruit') {
     if (!isAdmin(interaction.member))
-      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     const fruit = interaction.options.getString('fruit').toLowerCase();
 
     if (!inventory[fruit])
-      return interaction.reply({ content: `❌ Unknown fruit: \`${fruit}\``, ephemeral: true });
+      return interaction.reply({ content: `❌ Unknown fruit: \`${fruit}\``, flags: MessageFlags.Ephemeral });
 
     delete inventory[fruit];
     saveState();  // SAVE TO FILE
@@ -530,14 +530,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     return interaction.reply({
       content: `✅ **${fruit}** removed from shop. (saved to file)`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 
   // ── /bulkadd ────────────────────────────────
   if (interaction.isChatInputCommand() && interaction.commandName === 'bulkadd') {
     if (!isAdmin(interaction.member))
-      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     const data = interaction.options.getString('data').trim();
     const parts = data.split(/\s+/);  // Split by whitespace
@@ -580,21 +580,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
       response += (updates.length > 0 ? '\n\n' : '') + '❌ Errors:\n' + errors.map(e => `  • ${e}`).join('\n');
     }
 
-    return interaction.reply({ content: response || 'No changes made.', ephemeral: true });
+    return interaction.reply({ content: response || 'No changes made.', flags: MessageFlags.Ephemeral });
   }
   if (interaction.isChatInputCommand() && interaction.commandName === 'orders') {
     if (!isAdmin(interaction.member))
-      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     const pending = [...orders.values()].filter(o => o.status === 'pending');
     if (pending.length === 0)
-      return interaction.reply({ content: 'No pending orders.', ephemeral: true });
+      return interaction.reply({ content: 'No pending orders.', flags: MessageFlags.Ephemeral });
 
     const list = pending
       .map(o => `\`${o.orderId}\` — ${o.fruit || o.items?.map(i => i.fruit).join(', ')} (${o.username})`)
       .join('\n');
 
-    return interaction.reply({ content: `**Pending Orders:**\n${list}`, ephemeral: true });
+    return interaction.reply({ content: `**Pending Orders:**\n${list}`, flags: MessageFlags.Ephemeral });
   }
 
   // ── /bulkorder ──────────────────────────────
@@ -604,7 +604,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (available.length === 0) {
       return interaction.reply({
         content: 'Sorry, no fruits are currently in stock!',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -637,7 +637,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (available.length > 5) {
       return interaction.reply({
         content: `⚠️ You have more than 5 fruits in stock. Please use the form for the first 5 or use separate orders:\n\n${fruitList}`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -648,28 +648,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isChatInputCommand() && interaction.commandName === 'closeticket') {
     const orderId = interaction.options.getString('orderid');
     const order = orders.get(orderId);
-    if (!order) return interaction.reply({ content: `❌ Order not found: ${orderId}`, ephemeral: true });
-    if (!order.ticketChannelId) return interaction.reply({ content: `❌ Order ${orderId} does not have an open ticket.`, ephemeral: true });
+    if (!order) return interaction.reply({ content: `❌ Order not found: ${orderId}`, flags: MessageFlags.Ephemeral });
+    if (!order.ticketChannelId) return interaction.reply({ content: `❌ Order ${orderId} does not have an open ticket.`, flags: MessageFlags.Ephemeral });
 
     const isOwner = interaction.user.id === order.userId;
     if (!isOwner && !isAdmin(interaction.member))
-      return interaction.reply({ content: '❌ Only the buyer or staff can close this ticket.', ephemeral: true });
+      return interaction.reply({ content: '❌ Only the buyer or staff can close this ticket.', flags: MessageFlags.Ephemeral });
 
     const guild = client.guilds.cache.get(order.guildId) || await client.guilds.fetch(order.guildId);
-    if (!guild) return interaction.reply({ content: '❌ Could not resolve the guild for this order.', ephemeral: true });
+    if (!guild) return interaction.reply({ content: '❌ Could not resolve the guild for this order.', flags: MessageFlags.Ephemeral });
 
     const ticketChannel = await guild.channels.fetch(order.ticketChannelId).catch(() => null);
-    if (!ticketChannel) return interaction.reply({ content: '❌ Ticket channel not found or already deleted.', ephemeral: true });
+    if (!ticketChannel) return interaction.reply({ content: '❌ Ticket channel not found or already deleted.', flags: MessageFlags.Ephemeral });
 
     try {
       await ticketChannel.delete(`Ticket closed by ${interaction.user.tag}`);
       order.ticketChannelId = null;
       if (order.status === 'accepted') order.status = 'closed';
       saveState();  // SAVE TO FILE
-      return interaction.reply({ content: `✅ Ticket for ${orderId} has been closed.`, ephemeral: true });
+      return interaction.reply({ content: `✅ Ticket for ${orderId} has been closed.`, flags: MessageFlags.Ephemeral });
     } catch (err) {
       console.error('❌ Could not delete ticket channel:', err);
-      return interaction.reply({ content: '❌ Could not delete the ticket channel. Check bot permissions.', ephemeral: true });
+      return interaction.reply({ content: '❌ Could not delete the ticket channel. Check bot permissions.', flags: MessageFlags.Ephemeral });
     }
   }
 
@@ -677,12 +677,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isButton() && interaction.customId === 'start_order') {
     const hasStock = Object.values(inventory).some(v => getAvailableStock(v) > 0);
     if (!hasStock)
-      return interaction.reply({ content: 'All fruits are currently out of stock. Check back later!', ephemeral: true });
+      return interaction.reply({ content: 'All fruits are currently out of stock. Check back later!', flags: MessageFlags.Ephemeral });
 
     return interaction.reply({
       content: '**Step 1 of 2 —** Select the fruit you want:',
       components: [buildFruitMenu()],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 
@@ -707,7 +707,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               .setStyle(ButtonStyle.Primary)
           )
         ],
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -808,7 +808,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (qty > availableStock) {
         return interaction.reply({
           content: `❌ Only **${availableStock}** ${fruit} left in stock. Please adjust your quantity.`,
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
 
@@ -896,7 +896,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           `Please send your **payment screenshot** to ${ordersChannel ? `<#${ordersChannel.id}>` : `#${CONFIG.ORDERS_CHANNEL}`} ` +
           `and include your Order ID \`${orderId}\` in the message.\n\n` +
           `You'll receive a **DM** once your order is confirmed. Thank you! `,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
 
     } catch (err) {
@@ -905,7 +905,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.replied && !interaction.deferred) {
         return interaction.reply({
           content: '❌ Something went wrong saving your order. Please try again or DM @somin.',
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
     }
@@ -938,7 +938,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // Validate all selections are present in quantities
       for (const sel of selections) {
         if (!quantities[sel]) {
-          return interaction.reply({ content: `❌ Missing quantity for **${sel}**. Follow the format: fruit:quantity`, ephemeral: true });
+          return interaction.reply({ content: `❌ Missing quantity for **${sel}**. Follow the format: fruit:quantity`, flags: MessageFlags.Ephemeral });
         }
       }
 
@@ -947,10 +947,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const items = [];
       for (const sel of selections) {
         const f = inventory[sel];
-        if (!f) return interaction.reply({ content: `❌ Unknown fruit: ${sel}`, ephemeral: true });
+        if (!f) return interaction.reply({ content: `❌ Unknown fruit: ${sel}`, flags: MessageFlags.Ephemeral });
         const qty = quantities[sel] || 0;
         const available = getAvailableStock(f);
-        if (qty > available) return interaction.reply({ content: `❌ Only **${available}** ${sel} left in stock.`, ephemeral: true });
+        if (qty > available) return interaction.reply({ content: `❌ Only **${available}** ${sel} left in stock.`, flags: MessageFlags.Ephemeral });
         total += f.price * qty;
         items.push({ fruit: sel, qty, price: f.price });
       }
@@ -1014,12 +1014,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       await updateShopDisplay(interaction.guild, true);
 
-      return interaction.reply({ content: `✅ Order placed! Order ID: \`${orderId}\` — Total: ₱${total}`, ephemeral: true });
+      return interaction.reply({ content: `✅ Order placed! Order ID: \`${orderId}\` — Total: ₱${total}`, flags: MessageFlags.Ephemeral });
 
     } catch (err) {
       console.error('❌ Error handling bulk order modal:', err);
       if (!interaction.replied && !interaction.deferred) {
-        return interaction.reply({ content: '❌ Something went wrong saving your bulk order. Please try again.', ephemeral: true });
+        return interaction.reply({ content: '❌ Something went wrong saving your bulk order. Please try again.', flags: MessageFlags.Ephemeral });
       }
     }
   }
@@ -1043,7 +1043,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           if (qty > available) {
             return interaction.reply({
               content: `❌ Only **${available}** ${fruit} left in stock. Adjust your quantity.`,
-              ephemeral: true,
+              flags: MessageFlags.Ephemeral,
             });
           }
 
@@ -1059,7 +1059,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (items.length === 0) {
         return interaction.reply({
           content: '❌ Please enter at least one quantity greater than 0.',
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
 
@@ -1128,7 +1128,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                  `Items: ${summary}\n` +
                  `Total: **₱${total}**\n\n` +
                  `Admin will review and create a ticket for you shortly!`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
 
     } catch (err) {
@@ -1136,7 +1136,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.replied && !interaction.deferred) {
         return interaction.reply({
           content: '❌ Something went wrong. Please try again.',
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
     }
@@ -1145,7 +1145,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   // ── Modal Submit: bulk stock update ──────────
   if (interaction.isModalSubmit() && interaction.customId.startsWith('bulkstock_modal:')) {
     if (!isAdmin(interaction.member))
-      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     try {
       const updates = [];
@@ -1178,7 +1178,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (updates.length === 0 && errors.length === 0) {
         return interaction.reply({
           content: '❌ Please update at least one fruit stock.',
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
 
@@ -1197,7 +1197,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       return interaction.reply({
         content: response,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
 
     } catch (err) {
@@ -1205,7 +1205,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!interaction.replied && !interaction.deferred) {
         return interaction.reply({
           content: '❌ Something went wrong. Please try again.',
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
     }
@@ -1214,14 +1214,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
   // ── Button: Admin accepts order and creates ticket ───────────
   if (interaction.isButton() && interaction.customId.startsWith('accept_order:')) {
     if (!isAdmin(interaction.member))
-      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     const orderId = interaction.customId.split(':')[1];
     const order   = orders.get(orderId);
 
-    if (!order) return interaction.reply({ content: '❌ Order not found.', ephemeral: true });
+    if (!order) return interaction.reply({ content: '❌ Order not found.', flags: MessageFlags.Ephemeral });
     if (order.status !== 'pending')
-      return interaction.reply({ content: `⚠️ Order is already **${order.status}**.`, ephemeral: true });
+      return interaction.reply({ content: `⚠️ Order is already **${order.status}**.`, flags: MessageFlags.Ephemeral });
 
     const guild = interaction.guild;
     const adminRole = guild.roles.cache.find(r => r.name === CONFIG.ADMIN_ROLE);
@@ -1244,7 +1244,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     } catch (err) {
       console.error('❌ Failed to create ticket channel:', err);
-      return interaction.reply({ content: '❌ Could not create ticket channel. Please check permissions.', ephemeral: true });
+      return interaction.reply({ content: '❌ Could not create ticket channel. Please check permissions.', flags: MessageFlags.Ephemeral });
     }
 
     order.status = 'accepted';
@@ -1280,51 +1280,51 @@ client.on(Events.InteractionCreate, async (interaction) => {
       console.warn('⚠️ Could not send ticket welcome message:', err.message);
     }
 
-    return interaction.reply({ content: `✅ Order accepted and ticket created: <#${ticketChannel.id}>`, ephemeral: true });
+    return interaction.reply({ content: `✅ Order accepted and ticket created: <#${ticketChannel.id}>`, flags: MessageFlags.Ephemeral });
   }
 
   // ── Button: Close a ticket channel ───────────
   if (interaction.isButton() && interaction.customId.startsWith('close_ticket:')) {
     const orderId = interaction.customId.split(':')[1];
     const order = orders.get(orderId);
-    if (!order) return interaction.reply({ content: '❌ Order not found.', ephemeral: true });
+    if (!order) return interaction.reply({ content: '❌ Order not found.', flags: MessageFlags.Ephemeral });
 
     const canClose = isAdmin(interaction.member) || interaction.user.id === order.userId;
-    if (!canClose) return interaction.reply({ content: '❌ Only staff or the order owner can close this ticket.', ephemeral: true });
-    if (!order.ticketChannelId) return interaction.reply({ content: '❌ No ticket channel is linked to this order.', ephemeral: true });
+    if (!canClose) return interaction.reply({ content: '❌ Only staff or the order owner can close this ticket.', flags: MessageFlags.Ephemeral });
+    if (!order.ticketChannelId) return interaction.reply({ content: '❌ No ticket channel is linked to this order.', flags: MessageFlags.Ephemeral });
 
     const guild = client.guilds.cache.get(order.guildId) || await client.guilds.fetch(order.guildId);
-    if (!guild) return interaction.reply({ content: '❌ Could not resolve the guild for this order.', ephemeral: true });
+    if (!guild) return interaction.reply({ content: '❌ Could not resolve the guild for this order.', flags: MessageFlags.Ephemeral });
 
     const channel = await guild.channels.fetch(order.ticketChannelId).catch(() => null);
-    if (!channel) return interaction.reply({ content: '❌ Ticket channel not found or already deleted.', ephemeral: true });
+    if (!channel) return interaction.reply({ content: '❌ Ticket channel not found or already deleted.', flags: MessageFlags.Ephemeral });
 
     try {
       await channel.delete(`Ticket closed by ${interaction.user.tag}`);
     } catch (err) {
       console.error('❌ Could not delete ticket channel:', err);
-      return interaction.reply({ content: '❌ Could not delete the ticket channel. Check permissions.', ephemeral: true });
+      return interaction.reply({ content: '❌ Could not delete the ticket channel. Check permissions.', flags: MessageFlags.Ephemeral });
     }
 
     order.ticketChannelId = null;
     order.status = order.status === 'accepted' ? 'closed' : order.status;
 
-    return interaction.reply({ content: `✅ Ticket closed.`, ephemeral: true });
+    return interaction.reply({ content: `✅ Ticket closed.`, flags: MessageFlags.Ephemeral });
   }
 
   // ── Button: Admin confirms order ───────────
   if (interaction.isButton() && interaction.customId.startsWith('confirm_order:')) {
     if (!isAdmin(interaction.member))
-      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     const orderId = interaction.customId.split(':')[1];
     const order   = orders.get(orderId);
 
-    if (!order)  return interaction.reply({ content: '❌ Order not found.', ephemeral: true });
+    if (!order)  return interaction.reply({ content: '❌ Order not found.', flags: MessageFlags.Ephemeral });
     if (order.status === 'pending')
-      return interaction.reply({ content: '⚠️ Please accept the order first before confirming delivery.', ephemeral: true });
+      return interaction.reply({ content: '⚠️ Please accept the order first before confirming delivery.', flags: MessageFlags.Ephemeral });
     if (order.status !== 'accepted')
-      return interaction.reply({ content: `⚠️ Order is already **${order.status}**.`, ephemeral: true });
+      return interaction.reply({ content: `⚠️ Order is already **${order.status}**.`, flags: MessageFlags.Ephemeral });
 
     order.status      = 'confirmed';
     order.confirmedBy = interaction.user.tag;
@@ -1388,21 +1388,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     return interaction.reply({
       content: `✅ Order **${orderId}** confirmed. Buyer has been notified via DM @1mjustkael_ .`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 
   // ── Button: Admin cancels order ────────────
   if (interaction.isButton() && interaction.customId.startsWith('cancel_order:')) {
     if (!isAdmin(interaction.member))
-      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     const orderId = interaction.customId.split(':')[1];
     const order   = orders.get(orderId);
 
-    if (!order)  return interaction.reply({ content: '❌ Order not found.', ephemeral: true });
+    if (!order)  return interaction.reply({ content: '❌ Order not found.', flags: MessageFlags.Ephemeral });
     if (!['pending', 'accepted'].includes(order.status))
-      return interaction.reply({ content: `⚠️ Order is already **${order.status}**.`, ephemeral: true });
+      return interaction.reply({ content: `⚠️ Order is already **${order.status}**.`, flags: MessageFlags.Ephemeral });
 
     // Release reserved stock for cancelled orders (support multi-item)
     if (Array.isArray(order.items)) {
@@ -1444,7 +1444,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     return interaction.reply({
       content: `❌ Order **${orderId}** cancelled. Stock restored. Buyer notified.`,
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 
@@ -1454,12 +1454,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const order   = orders.get(orderId);
 
     if (!order)
-      return interaction.reply({ content: '❌ Order not found.', ephemeral: true });
+      return interaction.reply({ content: '❌ Order not found.', flags: MessageFlags.Ephemeral });
 
     try {
       const guild = client.guilds.cache.get(order.guildId) || await client.guilds.fetch(order.guildId);
       if (!guild) {
-        return interaction.reply({ content: '❌ Unable to resolve the server for this order.', ephemeral: true });
+        return interaction.reply({ content: '❌ Unable to resolve the server for this order.', flags: MessageFlags.Ephemeral });
       }
 
       await guild.channels.fetch();
@@ -1470,7 +1470,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (!vouchChannel) {
         return interaction.reply({
           content: `❌ Vouch channel (#${CONFIG.VOUCH_CHANNEL}) not found. Contact an admin.`,
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
 
@@ -1494,13 +1494,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       return interaction.reply({
         content: '✅ Thank you for your vouch! It has been posted.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     } catch (err) {
       console.error('❌ Error posting vouch:', err);
       return interaction.reply({
         content: '❌ Failed to post vouch. Please try again.',
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
   }
