@@ -71,7 +71,7 @@ function buildShopEmbed() {
     .join('\n');
 
   return new EmbedBuilder()
-    .setTitle('byfron's bloxfruit shop')
+    .setTitle('byfron bloxfruit shop')
     .setDescription(
       'Pick a fruit below and click **Order Now** to start your order.\n' +
       '> **Payment:** GCash and PayPal only\n' +
