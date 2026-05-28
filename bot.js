@@ -26,7 +26,7 @@ const CONFIG = {
   ORDERS_CHANNEL:   'orders',       // channel where buyers send receipt screenshots
   VOUCH_CHANNEL:    'vouches',      // channel where vouches are posted
   ADMIN_ROLE:       'Admin',        // role name that can confirm/cancel
-  SHOP_PING:        '@members',     // mention to send before the shop embed (use @stock or @here if desired)
+  SHOP_PING:        '@here',     // mention to send before the shop embed (use @stock or @here if desired)
 };
 
 // ─────────────────────────────────────────────
