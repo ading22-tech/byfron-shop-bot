@@ -31,18 +31,18 @@ const CONFIG = {
 //  FRUIT INVENTORY  (edit prices / stock freely)
 // ─────────────────────────────────────────────
 const inventory = {
-  kitsune:   { price: 145, stock: 1, emoji: '🦊' },
-  gas:       { price: 30,  stock: 2, emoji: '💨' },
-  yeti:      { price: 50,  stock: 1, emoji: '❄️'  },
-  tiger:     { price: 55,  stock: 1, emoji: '🐯' },
-  buddha:    { price: 10,  stock: 3, emoji: '☯️'  },
-  portal:    { price: 10,  stock: 3, emoji: '🌀' },
-  dragon:    { price: 0,   stock: 0, emoji: '🐉' },
-  trex:      { price: 20,  stock: 1, emoji: '🦖' },
-  mammoth:   { price: 20,  stock: 3, emoji: '🦣' },
-  venom:     { price: 45,  stock: 2, emoji: '🐍' },
-  lightning: { price: 30,  stock: 1, emoji: '⚡' },
-  dough:     { price: 20,  stock: 3, emoji: '🍞' },
+  kitsune:   { price: 145, stock: 1 },
+  gas:       { price: 30,  stock: 2 },
+  yeti:      { price: 50,  stock: 1 },
+  tiger:     { price: 55,  stock: 1 },
+  buddha:    { price: 10,  stock: 3 },
+  portal:    { price: 10,  stock: 3 },
+  dragon:    { price: 0,   stock: 0 },
+  trex:      { price: 20,  stock: 1 },
+  mammoth:   { price: 20,  stock: 3 },
+  venom:     { price: 45,  stock: 2 },
+  lightning: { price: 30,  stock: 1 },
+  dough:     { price: 20,  stock: 3 },
 };
 
 // In-memory order store. Replace with a JSON file or SQLite for persistence.
@@ -62,25 +62,25 @@ function isAdmin(member) {
 function buildShopEmbed() {
   const available = Object.entries(inventory)
     .filter(([, v]) => v.stock > 0)
-    .map(([name, v]) => `${v.emoji} **${name}** — ₱${v.price}  \`[${v.stock} in stock]\``)
+    .map(([name, v]) => `**${name}** — ₱${v.price}  \`[${v.stock} in stock]\``)
     .join('\n');
 
   const oos = Object.entries(inventory)
     .filter(([, v]) => v.stock === 0)
-    .map(([name, v]) => `${v.emoji} ~~${name}~~ — out of stock`)
+    .map(([name, v]) => `~~${name}~~ — out of stock`)
     .join('\n');
 
   return new EmbedBuilder()
-    .setTitle('🏪  byfron\'s bloxfruit shop')
+    .setTitle('byfron's bloxfruit shop')
     .setDescription(
-      'Pick a fruit below and click **🛒 Order Now** to start your order.\n' +
+      'Pick a fruit below and click **Order Now** to start your order.\n' +
       '> **Payment:** GCash and PayPal only\n' +
-      '> **Support:** DM @1mjustkael_'
+      '> **Support:** DM @somin'
     )
     .setColor(0xFFD700)
     .addFields(
-      { name: '✅  Available', value: available || '_No fruits in stock_', inline: false },
-      { name: '❌  Out of Stock', value: oos || '_None_', inline: false },
+      { name: 'Available', value: available || '_No fruits in stock_', inline: false },
+      { name: 'Out of Stock', value: oos || '_None_', inline: false },
     )
     .setFooter({ text: 'byfron services • bloxfruit shop' })
     .setTimestamp();
@@ -93,7 +93,7 @@ function buildFruitMenu() {
       label: `${name}  —  ₱${v.price}`,
       description: `${v.stock} in stock`,
       value: name,
-      emoji: v.emoji,
+      
     }));
 
   return new ActionRowBuilder().addComponents(
@@ -161,7 +161,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         new ActionRowBuilder().addComponents(
           new ButtonBuilder()
             .setCustomId('start_order')
-            .setLabel('🛒  Order Now')
+            .setLabel('Order Now')
             .setStyle(ButtonStyle.Success)
         )
       ],
@@ -194,20 +194,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const pending = [...orders.values()].filter(o => o.status === 'pending');
     if (pending.length === 0)
-      return interaction.reply({ content: '📭 No pending orders.', ephemeral: true });
+      return interaction.reply({ content: 'No pending orders.', ephemeral: true });
 
     const list = pending
       .map(o => `\`${o.orderId}\` — ${o.fruit} x${o.qty}  (${o.username})`)
       .join('\n');
 
-    return interaction.reply({ content: `**📋 Pending Orders:**\n${list}`, ephemeral: true });
+    return interaction.reply({ content: `**Pending Orders:**\n${list}`, ephemeral: true });
   }
 
   // ── Button: "Order Now" ────────────────────
   if (interaction.isButton() && interaction.customId === 'start_order') {
     const hasStock = Object.values(inventory).some(v => v.stock > 0);
     if (!hasStock)
-      return interaction.reply({ content: '😔 All fruits are currently out of stock. Check back later!', ephemeral: true });
+      return interaction.reply({ content: 'All fruits are currently out of stock. Check back later!', ephemeral: true });
 
     return interaction.reply({
       content: '**Step 1 of 2 —** Select the fruit you want:',
@@ -223,14 +223,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     return interaction.reply({
       content:
-        `You selected  ${f.emoji} **${fruit}**  — ₱${f.price}\n` +
+        `You selected  **${fruit}**  — ₱${f.price}\n` +
         `*(${f.stock} in stock)*\n\n` +
         `**Step 2 of 2 —** Click below to fill in your order details.`,
       components: [
         new ActionRowBuilder().addComponents(
           new ButtonBuilder()
             .setCustomId(`fill_order:${fruit}`)
-            .setLabel('📝  Fill Order Form')
+            .setLabel('Fill Order Form')
             .setStyle(ButtonStyle.Primary)
         )
       ],
@@ -300,84 +300,109 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   // ── Modal Submit: order form ───────────────
   if (interaction.isModalSubmit() && interaction.customId.startsWith('order_modal:')) {
-    const fruit = interaction.customId.split(':')[1];
-    const f     = inventory[fruit];
+    try {
+      const fruit = interaction.customId.split(':')[1];
+      const f     = inventory[fruit];
 
-    const qty           = Math.max(1, parseInt(interaction.fields.getTextInputValue('quantity')) || 1);
-    const paymentMethod = interaction.fields.getTextInputValue('payment_method').toLowerCase().trim();
-    const accountInfo   = interaction.fields.getTextInputValue('account_info').trim();
-    const reference     = interaction.fields.getTextInputValue('reference').trim();
-    const gameUsername  = interaction.fields.getTextInputValue('game_username').trim();
+      const qty           = Math.max(1, parseInt(interaction.fields.getTextInputValue('quantity')) || 1);
+      const paymentMethod = interaction.fields.getTextInputValue('payment_method').toLowerCase().trim();
+      const accountInfo   = interaction.fields.getTextInputValue('account_info').trim();
+      const reference     = interaction.fields.getTextInputValue('reference').trim();
+      const gameUsername  = interaction.fields.getTextInputValue('game_username').trim();
 
-    if (qty > f.stock) {
+      if (qty > f.stock) {
+        return interaction.reply({
+          content: `❌ Only **${f.stock}** ${fruit} left in stock. Please adjust your quantity.`,
+          ephemeral: true,
+        });
+      }
+
+      const total   = f.price * qty;
+      const orderId = `ORD-${String(orderCounter++).padStart(4, '0')}`;
+
+      orders.set(orderId, {
+        orderId, userId: interaction.user.id, username: interaction.user.tag,
+        fruit, qty, total, paymentMethod, accountInfo, reference, gameUsername,
+        status: 'pending', timestamp: new Date().toISOString(),
+      });
+
+      inventory[fruit].stock -= qty;
+
+      // Post to admin receipts channel
+      const guild           = interaction.guild;
+      // Fetch all channels in case cache is incomplete
+      await guild.channels.fetch();
+      const receiptsChannel = guild.channels.cache.find(
+        c => c.name === CONFIG.RECEIPTS_CHANNEL && c.isTextBased()
+      );
+      const ordersChannel = guild.channels.cache.find(
+        c => c.name === CONFIG.ORDERS_CHANNEL && c.isTextBased()
+      );
+
+      if (!receiptsChannel) {
+        console.warn(`⚠️  Could not find channel "#${CONFIG.RECEIPTS_CHANNEL}". Create it or update CONFIG.RECEIPTS_CHANNEL in bot.js`);
+      } else {
+        const orderEmbed = new EmbedBuilder()
+          .setTitle(`New Order — ${orderId}`)
+          .setColor(0xFFA500)
+          .addFields(
+            { name: 'Customer',      value: `<@${interaction.user.id}>\n${interaction.user.tag}`, inline: true },
+            { name: 'In-Game Name',  value: gameUsername,  inline: true },
+            { name: 'Fruit',         value: `${fruit}`, inline: true },
+            { name: 'Quantity',      value: `${qty}`,      inline: true },
+            { name: 'Total Amount',  value: `₱${total}`,   inline: true },
+            { name: 'Payment',       value: paymentMethod.toUpperCase(), inline: true },
+            { name: 'Buyer Account', value: accountInfo,   inline: true },
+            { name: 'Reference #',   value: `\`${reference}\``, inline: false },
+          )
+          .setTimestamp()
+          .setFooter({ text: `Order ID: ${orderId}` });
+
+        try {
+          await receiptsChannel.send({
+            content: `New order from <@${interaction.user.id}>. Verify payment then confirm below.`,
+            embeds: [orderEmbed],
+            components: [
+              new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`confirm_order:${orderId}`)
+                  .setLabel('Confirm and Deliver')
+                  .setStyle(ButtonStyle.Success),
+                new ButtonBuilder()
+                  .setCustomId(`cancel_order:${orderId}`)
+                  .setLabel('Cancel Order')
+                  .setStyle(ButtonStyle.Danger),
+              )
+            ],
+          });
+        } catch (sendErr) {
+          console.error(`❌ Failed to post to #${CONFIG.RECEIPTS_CHANNEL}:`, sendErr.message);
+          console.error('   → Make sure the bot has Send Messages + View Channel permission in that channel.');
+        }
+      }
+
+      // Tell the buyer what to do next
       return interaction.reply({
-        content: `❌ Only **${f.stock}** ${fruit} left in stock. Please adjust your quantity.`,
+        content:
+          `✅  **Order placed!**\n\n` +
+          `> Order ID: \`${orderId}\`\n` +
+          `> **${fruit}** × ${qty}  =  **₱${total}**\n\n` +
+          `Please send your **payment screenshot** to ${ordersChannel ? `<#${ordersChannel.id}>` : `#${CONFIG.ORDERS_CHANNEL}`} ` +
+          `and include your Order ID \`${orderId}\` in the message.\n\n` +
+          `You'll receive a **DM** once your order is confirmed. Thank you! `,
         ephemeral: true,
       });
+
+    } catch (err) {
+      console.error('❌ Error handling order modal:', err);
+      // If we haven't replied yet, send an error message
+      if (!interaction.replied && !interaction.deferred) {
+        return interaction.reply({
+          content: '❌ Something went wrong saving your order. Please try again or DM @somin.',
+          ephemeral: true,
+        });
+      }
     }
-
-    const total   = f.price * qty;
-    const orderId = `ORD-${String(orderCounter++).padStart(4, '0')}`;
-
-    orders.set(orderId, {
-      orderId, userId: interaction.user.id, username: interaction.user.tag,
-      fruit, qty, total, paymentMethod, accountInfo, reference, gameUsername,
-      status: 'pending', timestamp: new Date().toISOString(),
-    });
-
-    inventory[fruit].stock -= qty;
-
-    // Post to admin receipts channel
-    const guild           = interaction.guild;
-    const receiptsChannel = guild.channels.cache.find(c => c.name === CONFIG.RECEIPTS_CHANNEL);
-    const ordersChannel   = guild.channels.cache.find(c => c.name === CONFIG.ORDERS_CHANNEL);
-
-    if (receiptsChannel) {
-      const orderEmbed = new EmbedBuilder()
-        .setTitle(`📦  New Order — ${orderId}`)
-        .setColor(0xFFA500)
-        .addFields(
-          { name: '👤 Customer',         value: `<@${interaction.user.id}>\n${interaction.user.tag}`,  inline: true },
-          { name: '🎮 In-Game Name',      value: gameUsername,  inline: true },
-          { name: '🍎 Fruit',             value: `${f.emoji} ${fruit}`,  inline: true },
-          { name: '🔢 Quantity',          value: `${qty}`,      inline: true },
-          { name: '💰 Total Amount',      value: `₱${total}`,   inline: true },
-          { name: '💳 Payment Method',    value: paymentMethod.toUpperCase(), inline: true },
-          { name: '📱 Buyer Account',     value: accountInfo,   inline: true },
-          { name: '🧾 Reference #',       value: `\`${reference}\``, inline: false },
-        )
-        .setTimestamp()
-        .setFooter({ text: `Order ID: ${orderId}` });
-
-      await receiptsChannel.send({
-        content: `🔔  **@here** — New order from <@${interaction.user.id}>. Verify payment then confirm below.`,
-        embeds: [orderEmbed],
-        components: [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`confirm_order:${orderId}`)
-              .setLabel('✅  Confirm & Deliver')
-              .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-              .setCustomId(`cancel_order:${orderId}`)
-              .setLabel('❌  Cancel Order')
-              .setStyle(ButtonStyle.Danger),
-          )
-        ],
-      });
-    }
-
-    // Tell the buyer what to do next
-    return interaction.reply({
-      content:
-        `✅  **Order placed!**\n\n` +
-        `> 📋 Order ID: \`${orderId}\`\n` +
-        `> ${f.emoji} **${fruit}** × ${qty}  =  **₱${total}**\n\n` +
-        `📸  Please send your **payment screenshot** to ${ordersChannel ? `<#${ordersChannel.id}>` : `#${CONFIG.ORDERS_CHANNEL}`} ` +
-        `and include your Order ID \`${orderId}\` in the message.\n\n` +
-        `You'll receive a **DM** once your order is confirmed. Thank you! 🙏`,
-      ephemeral: true,
-    });
   }
 
   // ── Button: Admin confirms order ───────────
@@ -398,8 +423,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // Edit the receipts-channel embed to green
     const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
       .setColor(0x57F287)
-      .setTitle(`✅  CONFIRMED — ${orderId}`)
-      .addFields({ name: '✅ Confirmed By', value: interaction.user.tag, inline: true });
+      .setTitle(`CONFIRMED — ${orderId}`)
+      .addFields({ name: 'Confirmed By', value: interaction.user.tag, inline: true });
 
     await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
 
@@ -409,17 +434,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await buyerMember.send({
         embeds: [
           new EmbedBuilder()
-            .setTitle('🎉  Your order has been confirmed!')
+            .setTitle('Your order has been confirmed!')
             .setColor(0x57F287)
             .setDescription(
               `Your payment was verified and your order is being delivered.\n` +
               `Please **go online in Blox Fruits** and wait for the trade!\n\n` +
-              `Thank you for shopping at **byfron services** 🙏`
+              `Thank you for shopping at **byfron services** `
             )
             .addFields(
-              { name: '📋 Order ID',      value: orderId,         inline: true },
-              { name: '🍎 Fruit',         value: order.fruit,     inline: true },
-              { name: '🎮 In-Game Name',  value: order.gameUsername, inline: true },
+              { name: 'Order ID',      value: orderId,         inline: true },
+              { name: 'Fruit',         value: order.fruit,     inline: true },
+              { name: 'In-Game Name',  value: order.gameUsername, inline: true },
             )
             .setTimestamp()
         ]
@@ -452,8 +477,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
       .setColor(0xED4245)
-      .setTitle(`❌  CANCELLED — ${orderId}`)
-      .addFields({ name: '❌ Cancelled By', value: interaction.user.tag, inline: true });
+      .setTitle(`CANCELLED — ${orderId}`)
+      .addFields({ name: 'Cancelled By', value: interaction.user.tag, inline: true });
 
     await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
 
