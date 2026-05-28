@@ -466,6 +466,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       orders.set(orderId, {
         orderId, userId: interaction.user.id, username: interaction.user.tag,
+        guildId: interaction.guild.id,
         fruit, qty, total, paymentMethod, accountInfo, reference, gameUsername,
         status: 'pending', timestamp: new Date().toISOString(),
       });
@@ -666,7 +667,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ content: '❌ Order not found.', ephemeral: true });
 
     try {
-      const vouchChannel = interaction.guild.channels.cache.find(
+      const guild = client.guilds.cache.get(order.guildId) || await client.guilds.fetch(order.guildId);
+      if (!guild) {
+        return interaction.reply({ content: '❌ Unable to resolve the server for this order.', ephemeral: true });
+      }
+
+      await guild.channels.fetch();
+      const vouchChannel = guild.channels.cache.find(
         c => c.name === CONFIG.VOUCH_CHANNEL && c.isTextBased()
       );
 
