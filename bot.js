@@ -68,14 +68,36 @@ function loadState() {
       orderCounter = s.orderCounter;
     }
     
-    // Load inventory stock
+    // Load inventory as the source of truth, including added/removed fruits.
     if (s.inventory && typeof s.inventory === 'object') {
+      for (const fruit of Object.keys(inventory)) {
+        delete inventory[fruit];
+      }
+
       for (const [fruit, data] of Object.entries(s.inventory)) {
-        if (inventory[fruit] && typeof data.stock === 'number') {
-          inventory[fruit].stock = data.stock;
+        if (data && typeof data === 'object') {
+          inventory[fruit] = {
+            price: Number(data.price) || 0,
+            stock: Number(data.stock) || 0,
+            reserved: Number(data.reserved) || 0,
+          };
         }
       }
-      console.log('✅ Inventory stock loaded from file.');
+      console.log('✅ Inventory loaded from file.');
+    }
+
+    if (s.shopMessage && typeof s.shopMessage === 'object') {
+      lastShopChannelId = s.shopMessage.channelId || null;
+      lastShopMessageId = s.shopMessage.messageId || null;
+      if (lastShopChannelId && lastShopMessageId) {
+        console.log(`✅ Shop message loaded from file: ${lastShopMessageId}`);
+      }
+    }
+
+    if (s.shopPingMessages && typeof s.shopPingMessages === 'object') {
+      for (const [guildId, messageId] of Object.entries(s.shopPingMessages)) {
+        lastShopPingMessageId.set(guildId, messageId);
+      }
     }
     
     // Load orders
@@ -101,6 +123,11 @@ function saveState() {
       orderCounter,
       inventory,
       orders: ordersArray,
+      shopMessage: {
+        channelId: lastShopChannelId,
+        messageId: lastShopMessageId,
+      },
+      shopPingMessages: Object.fromEntries(lastShopPingMessageId),
     };
     fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2), 'utf8');
   } catch (e) {
@@ -203,7 +230,26 @@ function buildFruitMenu() {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId('select_fruit')
-      .setPlaceholder('Choose a fruit…')
+      .setPlaceholder('Choose fruit(s)…')
+      .setMinValues(1)
+      .setMaxValues(Math.min(5, options.length))
+      .addOptions(options)
+  );
+}
+
+function buildAdminFruitMenu(customId, placeholder) {
+  const options = Object.entries(inventory)
+    .slice(0, 25)
+    .map(([name, v]) => ({
+      label: name,
+      description: `Stock: ${v.stock} | Available: ${getAvailableStock(v)} | Price: ₱${v.price}`,
+      value: name,
+    }));
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(customId)
+      .setPlaceholder(placeholder)
       .setMinValues(1)
       .setMaxValues(Math.min(5, options.length))
       .addOptions(options)
@@ -255,6 +301,7 @@ async function updateShopDisplay(guild, sendPing = true) {
           });
           // remember this ping so it can be removed on next update
           lastShopPingMessageId.set(guild.id, pingMsg.id);
+          saveState();
         }
       } catch (e) {
         console.warn('⚠️ Could not send shop update ping:', e.message);
@@ -334,9 +381,6 @@ const slashCommands = [
   new SlashCommandBuilder()
     .setName('bulkadd')
     .setDescription('Add stock to multiple fruits at once (Admin only)')
-    .addStringOption(o =>
-      o.setName('data').setDescription('Format: fruit1:amount1 fruit2:amount2 (space-separated)').setRequired(true)
-    )
     .toJSON(),
 
   new SlashCommandBuilder()
@@ -350,6 +394,21 @@ const slashCommands = [
     .toJSON(),
 ];
 
+async function registerSlashCommands(rest, guilds = client.guilds.cache) {
+  const commandNames = slashCommands.map(command => `/${command.name}`).join(', ');
+
+  await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommands });
+  console.log(`✅  Slash commands registered globally: ${commandNames}`);
+
+  const guildList = [...guilds.values()];
+  if (guildList.length === 0) return;
+
+  for (const guild of guildList) {
+    await rest.put(Routes.applicationGuildCommands(client.user.id, guild.id), { body: slashCommands });
+    console.log(`✅  Slash commands registered for ${guild.name}: ${commandNames}`);
+  }
+}
+
 // ─────────────────────────────────────────────
 //  BOT READY
 // ─────────────────────────────────────────────
@@ -358,10 +417,19 @@ client.once(Events.ClientReady, async () => {
 
   const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
   try {
-    await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommands });
-    console.log('✅  Slash commands registered globally.');
+    await registerSlashCommands(rest);
   } catch (err) {
     console.error('❌  Failed to register commands:', err);
+  }
+});
+
+client.on(Events.GuildCreate, async (guild) => {
+  const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+  try {
+    await rest.put(Routes.applicationGuildCommands(client.user.id, guild.id), { body: slashCommands });
+    console.log(`✅  Slash commands registered for ${guild.name}.`);
+  } catch (err) {
+    console.error(`❌  Failed to register commands for ${guild.name}:`, err);
   }
 });
 
@@ -390,6 +458,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // Store the message ID for future updates
     lastShopMessageId = shopMessage.id;
     lastShopChannelId = interaction.channel.id;
+    saveState();
 
     return interaction.reply({ content: '✅ Shop posted!', flags: MessageFlags.Ephemeral });
   }
@@ -424,7 +493,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     const allFruits = Object.entries(inventory);
-    
     if (allFruits.length === 0) {
       return interaction.reply({
         content: 'No fruits in inventory!',
@@ -432,36 +500,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
 
-    const modal = new ModalBuilder()
-      .setCustomId(`bulkstock_modal:${interaction.user.id}:${Date.now()}`)
-      .setTitle('Update Fruit Stock');
-
-    // Add text input for each fruit (up to 5 for modal limit)
-    const fruitsToShow = allFruits.slice(0, 5);
-    
-    for (const [fruit, data] of fruitsToShow) {
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(
-          new TextInputBuilder()
-            .setCustomId(`stock_${fruit}`)
-            .setLabel(`${fruit} (current: ${data.stock})`)
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder(String(data.stock))
-            .setRequired(false)
-            .setMaxLength(3)
-        )
-      );
-    }
-
-    // If more than 5 fruits, add a note
-    if (allFruits.length > 5) {
-      return interaction.reply({
-        content: `⚠️ You have ${allFruits.length} fruits total. Form shows first 5. For others, use \`/stock\` command.`,
-        flags: MessageFlags.Ephemeral,
-      });
-    }
-
-    return interaction.showModal(modal);
+    return interaction.reply({
+      content: 'Select up to 5 fruits to set stock for:',
+      components: [buildAdminFruitMenu('bulkstock_select', 'Choose fruits to set stock…')],
+      flags: MessageFlags.Ephemeral,
+    });
   }
 
   // ── /addfruit ──────────────────────────────
@@ -539,49 +582,77 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!isAdmin(interaction.member))
       return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
-    const data = interaction.options.getString('data').trim();
-    const parts = data.split(/\s+/);  // Split by whitespace
-    
-    const updates = [];
-    const errors = [];
-
-    for (const part of parts) {
-      const [fruit, amountStr] = part.split(':');
-      const fruitLower = fruit.toLowerCase();
-      const amount = parseInt(amountStr);
-
-      if (!fruit || !amountStr || isNaN(amount)) {
-        errors.push(`Invalid format: \`${part}\` (use fruit:amount)`);
-        continue;
-      }
-
-      if (!inventory[fruitLower]) {
-        errors.push(`Unknown fruit: \`${fruitLower}\``);
-        continue;
-      }
-
-      if (amount < 0) {
-        errors.push(`Negative amount not allowed: \`${fruitLower}\``);
-        continue;
-      }
-
-      inventory[fruitLower].stock += amount;
-      updates.push(`${fruitLower} +${amount} → ${inventory[fruitLower].stock}`);
+    const allFruits = Object.entries(inventory);
+    if (allFruits.length === 0) {
+      return interaction.reply({
+        content: 'No fruits in inventory!',
+        flags: MessageFlags.Ephemeral,
+      });
     }
 
-    saveState();  // SAVE TO FILE
-    await updateShopDisplay(interaction.guild);
-
-    let response = '';
-    if (updates.length > 0) {
-      response += '✅ Updated:\n' + updates.map(u => `  • ${u}`).join('\n');
-    }
-    if (errors.length > 0) {
-      response += (updates.length > 0 ? '\n\n' : '') + '❌ Errors:\n' + errors.map(e => `  • ${e}`).join('\n');
-    }
-
-    return interaction.reply({ content: response || 'No changes made.', flags: MessageFlags.Ephemeral });
+    return interaction.reply({
+      content: 'Select up to 5 fruits to add stock to:',
+      components: [buildAdminFruitMenu('bulkadd_select', 'Choose fruits to add stock…')],
+      flags: MessageFlags.Ephemeral,
+    });
   }
+
+  if (interaction.isStringSelectMenu() && interaction.customId === 'bulkadd_select') {
+    if (!isAdmin(interaction.member))
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
+
+    const selections = interaction.values;
+    const modal = new ModalBuilder()
+      .setCustomId(`bulkadd_modal:${selections.join(',')}`)
+      .setTitle(`Add Stock (${selections.length} fruits)`);
+
+    for (const fruit of selections) {
+      const data = inventory[fruit];
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(`add_${fruit}`)
+            .setLabel(`${fruit} add amount (current: ${data.stock})`)
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('1')
+            .setValue('1')
+            .setRequired(true)
+            .setMaxLength(3)
+        )
+      );
+    }
+
+    return interaction.showModal(modal);
+  }
+
+  if (interaction.isStringSelectMenu() && interaction.customId === 'bulkstock_select') {
+    if (!isAdmin(interaction.member))
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
+
+    const selections = interaction.values;
+    const modal = new ModalBuilder()
+      .setCustomId(`bulkstock_modal:${selections.join(',')}`)
+      .setTitle(`Set Stock (${selections.length} fruits)`);
+
+    for (const fruit of selections) {
+      const data = inventory[fruit];
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(`stock_${fruit}`)
+            .setLabel(`${fruit} stock (current: ${data.stock})`)
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder(String(data.stock))
+            .setValue(String(data.stock))
+            .setRequired(true)
+            .setMaxLength(3)
+        )
+      );
+    }
+
+    return interaction.showModal(modal);
+  }
+
   if (interaction.isChatInputCommand() && interaction.commandName === 'orders') {
     if (!isAdmin(interaction.member))
       return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
@@ -680,7 +751,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ content: 'All fruits are currently out of stock. Check back later!', flags: MessageFlags.Ephemeral });
 
     return interaction.reply({
-      content: '**Step 1 of 2 —** Select the fruit you want:',
+      content: '**Step 1 of 2 —** Select one or more fruits:',
       components: [buildFruitMenu()],
       flags: MessageFlags.Ephemeral,
     });
@@ -711,23 +782,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
       });
     }
 
-    // multiple selection: open a modal to collect quantities for each selected fruit
-    const maxSelect = selections.length;
+    // multiple selection: open a modal with one quantity box per selected fruit.
     const modal = new ModalBuilder()
       .setCustomId(`order_modal_multi:${selections.join(',')}`)
       .setTitle(`Bulk Order (${selections.length} items)`);
 
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId('items')
-          .setLabel('Items and quantities')
-          .setStyle(TextInputStyle.Paragraph)
-          .setPlaceholder('Enter items and quantities, e.g. dragon:1, yeti:1 or dragon 1\nyeti 1')
-          .setRequired(true)
-          .setMaxLength(400)
-      )
-    );
+    for (const fruit of selections) {
+      const f = inventory[fruit];
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(`qty_${fruit}`)
+            .setLabel(`${fruit} quantity (${getAvailableStock(f)} available)`)
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('1')
+            .setValue('1')
+            .setRequired(true)
+            .setMaxLength(3)
+        )
+      );
+    }
 
     return interaction.showModal(modal);
   }
@@ -822,10 +896,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         status: 'pending', timestamp: new Date().toISOString(),
       });
 
-      // persist updated orderCounter to disk so sequence survives restarts
-      try { saveState(); } catch (e) { /* swallow */ }
-
       f.reserved = (f.reserved || 0) + qty;
+      saveState();
 
       // Post to admin receipts channel
       const guild           = interaction.guild;
@@ -917,29 +989,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const selectionPart = interaction.customId.split(':')[1];
       const selections = selectionPart.split(',').map(s => s.trim());
 
-      const raw = interaction.fields.getTextInputValue('items').trim();
-      // split by newline or comma
-      const tokens = raw.split(/[,\n]+/).map(t => t.trim()).filter(Boolean);
       const quantities = {};
-      for (const tok of tokens) {
-        let [name, qty] = tok.split(':').map(x => x && x.trim());
-        if (!qty) {
-          // try whitespace separator
-          const parts = tok.split(/\s+/);
-          name = parts[0];
-          qty = parts[1];
-        }
-        if (!name || !qty) continue;
-        const key = name.toLowerCase();
-        const n = parseInt(qty, 10) || 0;
-        if (n > 0) quantities[key] = (quantities[key] || 0) + n;
-      }
-
-      // Validate all selections are present in quantities
       for (const sel of selections) {
-        if (!quantities[sel]) {
-          return interaction.reply({ content: `❌ Missing quantity for **${sel}**. Follow the format: fruit:quantity`, flags: MessageFlags.Ephemeral });
+        const qty = parseInt(interaction.fields.getTextInputValue(`qty_${sel}`).trim(), 10);
+        if (!Number.isInteger(qty) || qty <= 0) {
+          return interaction.reply({ content: `❌ Enter a valid quantity for **${sel}**.`, flags: MessageFlags.Ephemeral });
         }
+        quantities[sel] = qty;
       }
 
       // Validate stock and compute total
@@ -962,13 +1018,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         items, total,
         status: 'pending', timestamp: new Date().toISOString(),
       });
-      try { saveState(); } catch (e) { }
-
       // reserve stock for each item
       for (const it of items) {
         const obj = inventory[it.fruit];
         obj.reserved = (obj.reserved || 0) + it.qty;
       }
+      saveState();
 
       // Post to receipts channel similar to single order but list items
       const guild = interaction.guild;
@@ -1075,12 +1130,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         status: 'pending',
         timestamp: new Date().toISOString(),
       });
-      saveState();
-
       // Reserve stock
       for (const item of items) {
         inventory[item.fruit].reserved = (inventory[item.fruit].reserved || 0) + item.qty;
       }
+      saveState();
 
       // Post to receipts channel
       const guild = interaction.guild;
@@ -1142,24 +1196,94 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 
+  // ── Modal Submit: bulk add stock ─────────────
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('bulkadd_modal:')) {
+    if (!isAdmin(interaction.member))
+      return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
+
+    try {
+      const selectionPart = interaction.customId.split(':')[1] || '';
+      const selections = selectionPart.split(',').map(s => s.trim()).filter(Boolean);
+      const updates = [];
+      const errors = [];
+
+      for (const fruit of selections) {
+        const amountStr = interaction.fields.getTextInputValue(`add_${fruit}`).trim();
+        const amount = parseInt(amountStr, 10);
+
+        if (!Number.isInteger(amount) || amount <= 0) {
+          errors.push(`Invalid add amount for ${fruit}: enter 1 or higher`);
+          continue;
+        }
+
+        if (!inventory[fruit]) {
+          errors.push(`Unknown fruit: ${fruit}`);
+          continue;
+        }
+
+        const oldStock = inventory[fruit].stock;
+        inventory[fruit].stock += amount;
+        updates.push(`${fruit}: ${oldStock} + ${amount} → ${inventory[fruit].stock}`);
+      }
+
+      if (updates.length === 0 && errors.length === 0) {
+        return interaction.reply({
+          content: '❌ Please select at least one fruit to update.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      saveState();
+      await updateShopDisplay(interaction.guild, true);
+
+      let response = '';
+      if (updates.length > 0) {
+        response += '✅ **Stock Added:**\n' + updates.map(u => `  • ${u}`).join('\n');
+      }
+      if (errors.length > 0) {
+        response += (updates.length > 0 ? '\n\n' : '') + '❌ **Errors:**\n' + errors.map(e => `  • ${e}`).join('\n');
+      }
+
+      return interaction.reply({
+        content: response,
+        flags: MessageFlags.Ephemeral,
+      });
+    } catch (err) {
+      console.error('Error handling bulkadd modal:', err);
+      if (!interaction.replied && !interaction.deferred) {
+        return interaction.reply({
+          content: '❌ Something went wrong. Please try again.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+    }
+  }
+
   // ── Modal Submit: bulk stock update ──────────
   if (interaction.isModalSubmit() && interaction.customId.startsWith('bulkstock_modal:')) {
     if (!isAdmin(interaction.member))
       return interaction.reply({ content: '❌ Admins only.', flags: MessageFlags.Ephemeral });
 
     try {
+      const selectionPart = interaction.customId.split(':')[1] || '';
+      const selections = selectionPart.split(',').map(s => s.trim()).filter(Boolean);
       const updates = [];
       const errors = [];
 
       // Collect stock updates from modal inputs
-      for (const [fruit, data] of Object.entries(inventory)) {
+      for (const fruit of selections) {
         try {
-          const stockStr = interaction.fields.getTextInputValue(`stock_${fruit}`).trim();
-          if (!stockStr) continue;  // Skip if empty
+          const data = inventory[fruit];
+          if (!data) {
+            errors.push(`Unknown fruit: ${fruit}`);
+            continue;
+          }
 
-          const newStock = parseInt(stockStr);
-          if (isNaN(newStock) || newStock < 0) {
-            errors.push(`Invalid amount for ${fruit}: must be a positive number`);
+          const stockStr = interaction.fields.getTextInputValue(`stock_${fruit}`).trim();
+
+          const newStock = parseInt(stockStr, 10);
+          if (!Number.isInteger(newStock) || newStock < 0) {
+            errors.push(`Invalid stock for ${fruit}: enter 0 or higher`);
             continue;
           }
 
