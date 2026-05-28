@@ -65,14 +65,11 @@ function isAdmin(member) {
 
 function buildShopEmbed() {
   const available = Object.entries(inventory)
-    .filter(([, v]) => v.stock > 0)
-    .map(([name, v]) => `**${name.toUpperCase()}** — ₱${v.price.toLocaleString()} │ \`${v.stock}x\``)
+    .map(([name, v]) => {
+      const padding = ' '.repeat(Math.max(0, 12 - name.length));
+      return `${name}${padding} - ₱${v.price} [${v.stock}]`;
+    })
     .join('\n');
-
-  const oos = Object.entries(inventory)
-    .filter(([, v]) => v.stock === 0)
-    .map(([name]) => `~~${name}~~`)
-    .join('  •  ');
 
   return new EmbedBuilder()
     .setTitle('BYFRON BLOXFRUIT SHOP')
@@ -84,13 +81,8 @@ function buildShopEmbed() {
     .setColor(0xFFD700)
     .addFields(
       { 
-        name: 'AVAILABLE FRUITS', 
-        value: available || 'No fruits in stock', 
-        inline: false 
-      },
-      { 
-        name: 'OUT OF STOCK', 
-        value: oos || 'None', 
+        name: 'STOCK LIST', 
+        value: '```\n' + available + '\n```', 
         inline: false 
       },
     )
