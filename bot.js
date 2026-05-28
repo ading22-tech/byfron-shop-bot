@@ -29,7 +29,7 @@ const CONFIG = {
 
 // ─────────────────────────────────────────────
 //  FRUIT INVENTORY  (edit prices / stock freely)
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────realtime shop stock update when order confirmed, and make it replaces the last /posthop instead of massaging again in channel
 const inventory = {
   kitsune:   { price: 145, stock: 1 },
   gas:       { price: 30,  stock: 2 },
@@ -49,6 +49,10 @@ const inventory = {
 const orders = new Map();
 let orderCounter = 1;
 
+// Store shop message ID for updating
+let lastShopMessageId = null;
+let lastShopChannelId = null;
+
 // ─────────────────────────────────────────────
 //  HELPERS
 // ─────────────────────────────────────────────
@@ -62,27 +66,35 @@ function isAdmin(member) {
 function buildShopEmbed() {
   const available = Object.entries(inventory)
     .filter(([, v]) => v.stock > 0)
-    .map(([name, v]) => `**${name}** — ₱${v.price}  \`[${v.stock} in stock]\``)
+    .map(([name, v]) => `**${name.toUpperCase()}** — ₱${v.price.toLocaleString()} │ \`${v.stock}x\``)
     .join('\n');
 
   const oos = Object.entries(inventory)
     .filter(([, v]) => v.stock === 0)
-    .map(([name, v]) => `~~${name}~~ — out of stock`)
-    .join('\n');
+    .map(([name]) => `~~${name}~~`)
+    .join('  •  ');
 
   return new EmbedBuilder()
-    .setTitle('byfron bloxfruit shop')
+    .setTitle('BYFRON BLOXFRUIT SHOP')
     .setDescription(
-      'Pick a fruit below and click **Order Now** to start your order.\n' +
-      '> **Payment:** GCash and PayPal only\n' +
-      '> **Support:** DM @somin'
+      'Pick a fruit below and click **Order Now** to start your order.\n\n' +
+      '**Payment:** GCash and PayPal only\n' +
+      '**Support:** DM @1mjustkael_ for any questions or issues with your order.'
     )
     .setColor(0xFFD700)
     .addFields(
-      { name: 'Available', value: available || '_No fruits in stock_', inline: false },
-      { name: 'Out of Stock', value: oos || '_None_', inline: false },
+      { 
+        name: 'AVAILABLE FRUITS', 
+        value: available || 'No fruits in stock', 
+        inline: false 
+      },
+      { 
+        name: 'OUT OF STOCK', 
+        value: oos || 'None', 
+        inline: false 
+      },
     )
-    .setFooter({ text: 'byfron services • bloxfruit shop' })
+    .setFooter({ text: 'byfron services • bloxfruit shop • Last updated' })
     .setTimestamp();
 }
 
@@ -102,6 +114,36 @@ function buildFruitMenu() {
       .setPlaceholder('Choose a fruit…')
       .addOptions(options)
   );
+}
+
+// Update the shop embed in the channel (edit existing message instead of posting new ones)
+async function updateShopDisplay(guild) {
+  try {
+    if (!lastShopChannelId || !lastShopMessageId) return; // No shop message to update
+
+    const channel = guild.channels.cache.get(lastShopChannelId) || await guild.channels.fetch(lastShopChannelId);
+    if (!channel || !channel.isTextBased()) return;
+
+    const message = await channel.messages.fetch(lastShopMessageId);
+    if (!message) return;
+
+    const shopEmbed = buildShopEmbed();
+    const shopComponents = [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('start_order')
+          .setLabel('Order Now')
+          .setStyle(ButtonStyle.Success)
+      )
+    ];
+
+    await message.edit({
+      embeds: [shopEmbed],
+      components: shopComponents,
+    });
+  } catch (err) {
+    console.warn('⚠️ Could not update shop display:', err.message);
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -155,7 +197,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!isAdmin(interaction.member))
       return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
 
-    await interaction.channel.send({
+    const shopMessage = await interaction.channel.send({
       embeds: [buildShopEmbed()],
       components: [
         new ActionRowBuilder().addComponents(
@@ -166,6 +208,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
         )
       ],
     });
+
+    // Store the message ID for future updates
+    lastShopMessageId = shopMessage.id;
+    lastShopChannelId = interaction.channel.id;
+
     return interaction.reply({ content: '✅ Shop posted!', ephemeral: true });
   }
 
@@ -181,6 +228,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ content: `❌ Unknown fruit: \`${fruit}\``, ephemeral: true });
 
     inventory[fruit].stock = amount;
+
+    // Update the shop display in real-time
+    await updateShopDisplay(interaction.guild);
+
     return interaction.reply({
       content: `✅ **${fruit}** stock updated to **${amount}**.`,
       ephemeral: true,
@@ -428,6 +479,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
 
+    // Update the shop display in real-time
+    await updateShopDisplay(interaction.guild);
+
     // DM the buyer
     try {
       const buyerMember = await interaction.guild.members.fetch(order.userId);
@@ -481,6 +535,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       .addFields({ name: 'Cancelled By', value: interaction.user.tag, inline: true });
 
     await interaction.message.edit({ embeds: [updatedEmbed], components: [] });
+
+    // Update the shop display in real-time
+    await updateShopDisplay(interaction.guild);
 
     // DM buyer
     try {
