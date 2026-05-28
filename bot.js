@@ -290,6 +290,14 @@ const slashCommands = [
     .setName('orders')
     .setDescription('List all pending orders (Admin only)')
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('closeticket')
+    .setDescription('Close an order ticket channel (Admin or buyer)')
+    .addStringOption(o =>
+      o.setName('orderid').setDescription('Order ID to close').setRequired(true)
+    )
+    .toJSON(),
 ];
 
 // ─────────────────────────────────────────────
@@ -436,10 +444,38 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ content: 'No pending orders.', ephemeral: true });
 
     const list = pending
-      .map(o => `\`${o.orderId}\` — ${o.fruit} x${o.qty}  (${o.username})`)
+      .map(o => `\`${o.orderId}\` — ${o.fruit || o.items?.map(i => i.fruit).join(', ')} (${o.username})`)
       .join('\n');
 
     return interaction.reply({ content: `**Pending Orders:**\n${list}`, ephemeral: true });
+  }
+
+  // ── /closeticket ───────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'closeticket') {
+    const orderId = interaction.options.getString('orderid');
+    const order = orders.get(orderId);
+    if (!order) return interaction.reply({ content: `❌ Order not found: ${orderId}`, ephemeral: true });
+    if (!order.ticketChannelId) return interaction.reply({ content: `❌ Order ${orderId} does not have an open ticket.`, ephemeral: true });
+
+    const isOwner = interaction.user.id === order.userId;
+    if (!isOwner && !isAdmin(interaction.member))
+      return interaction.reply({ content: '❌ Only the buyer or staff can close this ticket.', ephemeral: true });
+
+    const guild = client.guilds.cache.get(order.guildId) || await client.guilds.fetch(order.guildId);
+    if (!guild) return interaction.reply({ content: '❌ Could not resolve the guild for this order.', ephemeral: true });
+
+    const ticketChannel = await guild.channels.fetch(order.ticketChannelId).catch(() => null);
+    if (!ticketChannel) return interaction.reply({ content: '❌ Ticket channel not found or already deleted.', ephemeral: true });
+
+    try {
+      await ticketChannel.delete(`Ticket closed by ${interaction.user.tag}`);
+      order.ticketChannelId = null;
+      if (order.status === 'accepted') order.status = 'closed';
+      return interaction.reply({ content: `✅ Ticket for ${orderId} has been closed.`, ephemeral: true });
+    } catch (err) {
+      console.error('❌ Could not delete ticket channel:', err);
+      return interaction.reply({ content: '❌ Could not delete the ticket channel. Check bot permissions.', ephemeral: true });
+    }
   }
 
   // ── Button: "Order Now" ────────────────────
@@ -851,6 +887,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     try {
       await ticketChannel.send({
         content: `Order **${orderId}** has been accepted by <@${interaction.user.id}>. <@${order.userId}> has been added to this private ticket channel.`,
+        allowedMentions: { users: [interaction.user.id, order.userId] },
         components: [
           new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`close_ticket:${orderId}`).setLabel('Close Ticket').setStyle(ButtonStyle.Danger)
