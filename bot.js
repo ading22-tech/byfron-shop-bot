@@ -2,7 +2,7 @@ const {
   Client, GatewayIntentBits, EmbedBuilder,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
-  Events, REST, Routes, SlashCommandBuilder, PermissionFlagsBits
+  ChannelType, Events, REST, Routes, SlashCommandBuilder, PermissionFlagsBits
 } = require('discord.js');
 
 require('dotenv').config();
@@ -628,10 +628,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         try {
           await receiptsChannel.send({
-            content: `New order from <@${interaction.user.id}>. Verify payment, deliver the product, then mark it confirmed below.`,
+            content: `New order from <@${interaction.user.id}>. Accept the order to create a private ticket, then deliver and confirm it when ready.`,
             embeds: [orderEmbed],
             components: [
               new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`accept_order:${orderId}`)
+                  .setLabel('Accept Order')
+                  .setStyle(ButtonStyle.Primary),
                 new ButtonBuilder()
                   .setCustomId(`confirm_order:${orderId}`)
                   .setLabel('Mark Delivered')
@@ -762,10 +766,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         try {
           await receiptsChannel.send({
-            content: `New order from <@${interaction.user.id}>. Verify payment, deliver the product, then mark it confirmed below.`,
+            content: `New order from <@${interaction.user.id}>. Accept the order to create a private ticket, then deliver and confirm it when ready.`,
             embeds: [orderEmbed],
             components: [
               new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`accept_order:${orderId}`).setLabel('Accept Order').setStyle(ButtonStyle.Primary),
                 new ButtonBuilder().setCustomId(`confirm_order:${orderId}`).setLabel('Mark Delivered').setStyle(ButtonStyle.Success),
                 new ButtonBuilder().setCustomId(`cancel_order:${orderId}`).setLabel('Cancel Order').setStyle(ButtonStyle.Danger),
               )
@@ -788,6 +793,106 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 
+  // ── Button: Admin accepts order and creates ticket ───────────
+  if (interaction.isButton() && interaction.customId.startsWith('accept_order:')) {
+    if (!isAdmin(interaction.member))
+      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+
+    const orderId = interaction.customId.split(':')[1];
+    const order   = orders.get(orderId);
+
+    if (!order) return interaction.reply({ content: '❌ Order not found.', ephemeral: true });
+    if (order.status !== 'pending')
+      return interaction.reply({ content: `⚠️ Order is already **${order.status}**.`, ephemeral: true });
+
+    const guild = interaction.guild;
+    const adminRole = guild.roles.cache.find(r => r.name === CONFIG.ADMIN_ROLE);
+    const channelName = `ticket-${orderId.toLowerCase()}`;
+    const permissionOverwrites = [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      { id: interaction.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+      { id: order.userId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+    ];
+    if (adminRole) {
+      permissionOverwrites.push({ id: adminRole.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] });
+    }
+
+    let ticketChannel;
+    try {
+      ticketChannel = await guild.channels.create({
+        name: channelName,
+        type: ChannelType.GuildText,
+        permissionOverwrites,
+      });
+    } catch (err) {
+      console.error('❌ Failed to create ticket channel:', err);
+      return interaction.reply({ content: '❌ Could not create ticket channel. Please check permissions.', ephemeral: true });
+    }
+
+    order.status = 'accepted';
+    order.acceptedBy = interaction.user.tag;
+    order.ticketChannelId = ticketChannel.id;
+
+    const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+      .setColor(0x00B0F4)
+      .setTitle(`ACCEPTED — ${orderId}`)
+      .addFields({ name: 'Accepted By', value: interaction.user.tag, inline: true });
+
+    await interaction.message.edit({
+      embeds: [updatedEmbed],
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId(`confirm_order:${orderId}`).setLabel('Mark Delivered').setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`cancel_order:${orderId}`).setLabel('Cancel Order').setStyle(ButtonStyle.Danger),
+        )
+      ],
+    });
+
+    try {
+      await ticketChannel.send({
+        content: `Order **${orderId}** has been accepted by <@${interaction.user.id}>. <@${order.userId}> has been added to this private ticket channel.`,
+        components: [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`close_ticket:${orderId}`).setLabel('Close Ticket').setStyle(ButtonStyle.Danger)
+          )
+        ]
+      });
+    } catch (err) {
+      console.warn('⚠️ Could not send ticket welcome message:', err.message);
+    }
+
+    return interaction.reply({ content: `✅ Order accepted and ticket created: <#${ticketChannel.id}>`, ephemeral: true });
+  }
+
+  // ── Button: Close a ticket channel ───────────
+  if (interaction.isButton() && interaction.customId.startsWith('close_ticket:')) {
+    const orderId = interaction.customId.split(':')[1];
+    const order = orders.get(orderId);
+    if (!order) return interaction.reply({ content: '❌ Order not found.', ephemeral: true });
+
+    const canClose = isAdmin(interaction.member) || interaction.user.id === order.userId;
+    if (!canClose) return interaction.reply({ content: '❌ Only staff or the order owner can close this ticket.', ephemeral: true });
+    if (!order.ticketChannelId) return interaction.reply({ content: '❌ No ticket channel is linked to this order.', ephemeral: true });
+
+    const guild = client.guilds.cache.get(order.guildId) || await client.guilds.fetch(order.guildId);
+    if (!guild) return interaction.reply({ content: '❌ Could not resolve the guild for this order.', ephemeral: true });
+
+    const channel = await guild.channels.fetch(order.ticketChannelId).catch(() => null);
+    if (!channel) return interaction.reply({ content: '❌ Ticket channel not found or already deleted.', ephemeral: true });
+
+    try {
+      await channel.delete(`Ticket closed by ${interaction.user.tag}`);
+    } catch (err) {
+      console.error('❌ Could not delete ticket channel:', err);
+      return interaction.reply({ content: '❌ Could not delete the ticket channel. Check permissions.', ephemeral: true });
+    }
+
+    order.ticketChannelId = null;
+    order.status = order.status === 'accepted' ? 'closed' : order.status;
+
+    return interaction.reply({ content: `✅ Ticket closed.`, ephemeral: true });
+  }
+
   // ── Button: Admin confirms order ───────────
   if (interaction.isButton() && interaction.customId.startsWith('confirm_order:')) {
     if (!isAdmin(interaction.member))
@@ -797,7 +902,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const order   = orders.get(orderId);
 
     if (!order)  return interaction.reply({ content: '❌ Order not found.', ephemeral: true });
-    if (order.status !== 'pending')
+    if (order.status === 'pending')
+      return interaction.reply({ content: '⚠️ Please accept the order first before confirming delivery.', ephemeral: true });
+    if (order.status !== 'accepted')
       return interaction.reply({ content: `⚠️ Order is already **${order.status}**.`, ephemeral: true });
 
     order.status      = 'confirmed';
@@ -873,7 +980,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const order   = orders.get(orderId);
 
     if (!order)  return interaction.reply({ content: '❌ Order not found.', ephemeral: true });
-    if (order.status !== 'pending')
+    if (!['pending', 'accepted'].includes(order.status))
       return interaction.reply({ content: `⚠️ Order is already **${order.status}**.`, ephemeral: true });
 
     // Release reserved stock for cancelled orders (support multi-item)
