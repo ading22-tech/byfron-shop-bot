@@ -56,11 +56,36 @@ let orderCounter = 1;
 
 function loadState() {
   try {
-    if (!fs.existsSync(STATE_FILE)) return;
+    if (!fs.existsSync(STATE_FILE)) {
+      console.log('ℹ️ No state file found, starting fresh.');
+      return;
+    }
     const raw = fs.readFileSync(STATE_FILE, 'utf8');
     const s = JSON.parse(raw || '{}');
+    
+    // Load order counter
     if (s.orderCounter && Number.isInteger(s.orderCounter) && s.orderCounter > 0) {
       orderCounter = s.orderCounter;
+    }
+    
+    // Load inventory stock
+    if (s.inventory && typeof s.inventory === 'object') {
+      for (const [fruit, data] of Object.entries(s.inventory)) {
+        if (inventory[fruit] && typeof data.stock === 'number') {
+          inventory[fruit].stock = data.stock;
+        }
+      }
+      console.log('✅ Inventory stock loaded from file.');
+    }
+    
+    // Load orders
+    if (s.orders && Array.isArray(s.orders)) {
+      for (const orderData of s.orders) {
+        if (orderData.orderId) {
+          orders.set(orderData.orderId, orderData);
+        }
+      }
+      console.log(`✅ ${orders.size} orders loaded from file.`);
     }
   } catch (e) {
     console.warn('⚠️ Could not load state file:', e.message);
@@ -69,8 +94,15 @@ function loadState() {
 
 function saveState() {
   try {
-    const s = { orderCounter };
-    fs.writeFileSync(STATE_FILE, JSON.stringify(s), 'utf8');
+    // Convert orders Map to array for JSON serialization
+    const ordersArray = Array.from(orders.values());
+    
+    const s = { 
+      orderCounter,
+      inventory,
+      orders: ordersArray,
+    };
+    fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2), 'utf8');
   } catch (e) {
     console.warn('⚠️ Could not save state file:', e.message);
   }
@@ -298,6 +330,24 @@ const slashCommands = [
       o.setName('orderid').setDescription('Order ID to close').setRequired(true)
     )
     .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('bulkadd')
+    .setDescription('Add stock to multiple fruits at once (Admin only)')
+    .addStringOption(o =>
+      o.setName('data').setDescription('Format: fruit1:amount1 fruit2:amount2 (space-separated)').setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('bulkorder')
+    .setDescription('Order multiple fruits at once with quantities')
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('bulkstock')
+    .setDescription('Update stock for multiple fruits at once (Admin only)')
+    .toJSON(),
 ];
 
 // ─────────────────────────────────────────────
@@ -357,14 +407,61 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     inventory[fruit].stock = amount;
     inventory[fruit].reserved = Math.min(inventory[fruit].reserved || 0, amount);
+    saveState();  // SAVE TO FILE
 
     // Update the shop display in real-time (ping because stock changed via delivery)
     await updateShopDisplay(interaction.guild, true);
 
     return interaction.reply({
-      content: `✅ **${fruit}** stock updated to **${amount}**.`,
+      content: `✅ **${fruit}** stock updated to **${amount}**. (saved to file)`,
       ephemeral: true,
     });
+  }
+
+  // ── /bulkstock ──────────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'bulkstock') {
+    if (!isAdmin(interaction.member))
+      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+
+    const allFruits = Object.entries(inventory);
+    
+    if (allFruits.length === 0) {
+      return interaction.reply({
+        content: 'No fruits in inventory!',
+        ephemeral: true,
+      });
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId(`bulkstock_modal:${interaction.user.id}:${Date.now()}`)
+      .setTitle('Update Fruit Stock');
+
+    // Add text input for each fruit (up to 5 for modal limit)
+    const fruitsToShow = allFruits.slice(0, 5);
+    
+    for (const [fruit, data] of fruitsToShow) {
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(`stock_${fruit}`)
+            .setLabel(`${fruit} (current: ${data.stock})`)
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder(String(data.stock))
+            .setRequired(false)
+            .setMaxLength(3)
+        )
+      );
+    }
+
+    // If more than 5 fruits, add a note
+    if (allFruits.length > 5) {
+      return interaction.reply({
+        content: `⚠️ You have ${allFruits.length} fruits total. Form shows first 5. For others, use \`/stock\` command.`,
+        ephemeral: true,
+      });
+    }
+
+    return interaction.showModal(modal);
   }
 
   // ── /addfruit ──────────────────────────────
@@ -380,12 +477,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ content: `❌ **${name}** already exists in inventory!`, ephemeral: true });
 
     inventory[name] = { price, stock };
+    saveState();  // SAVE TO FILE
 
     // Update the shop display in real-time
     await updateShopDisplay(interaction.guild);
 
     return interaction.reply({
-      content: `✅ **${name}** added to shop! Price: ₱${price} | Stock: ${stock}`,
+      content: `✅ **${name}** added to shop! Price: ₱${price} | Stock: ${stock} (saved to file)`,
       ephemeral: true,
     });
   }
@@ -403,12 +501,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     const oldPrice = inventory[fruit].price;
     inventory[fruit].price = price;
+    saveState();  // SAVE TO FILE
 
     // Update the shop display in real-time
     await updateShopDisplay(interaction.guild);
 
     return interaction.reply({
-      content: `✅ **${fruit}** price updated: ₱${oldPrice} → ₱${price}`,
+      content: `✅ **${fruit}** price updated: ₱${oldPrice} → ₱${price} (saved to file)`,
       ephemeral: true,
     });
   }
@@ -424,17 +523,65 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ content: `❌ Unknown fruit: \`${fruit}\``, ephemeral: true });
 
     delete inventory[fruit];
+    saveState();  // SAVE TO FILE
 
     // Update the shop display in real-time
     await updateShopDisplay(interaction.guild);
 
     return interaction.reply({
-      content: `✅ **${fruit}** removed from shop.`,
+      content: `✅ **${fruit}** removed from shop. (saved to file)`,
       ephemeral: true,
     });
   }
 
-  // ── /orders ────────────────────────────────
+  // ── /bulkadd ────────────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'bulkadd') {
+    if (!isAdmin(interaction.member))
+      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+
+    const data = interaction.options.getString('data').trim();
+    const parts = data.split(/\s+/);  // Split by whitespace
+    
+    const updates = [];
+    const errors = [];
+
+    for (const part of parts) {
+      const [fruit, amountStr] = part.split(':');
+      const fruitLower = fruit.toLowerCase();
+      const amount = parseInt(amountStr);
+
+      if (!fruit || !amountStr || isNaN(amount)) {
+        errors.push(`Invalid format: \`${part}\` (use fruit:amount)`);
+        continue;
+      }
+
+      if (!inventory[fruitLower]) {
+        errors.push(`Unknown fruit: \`${fruitLower}\``);
+        continue;
+      }
+
+      if (amount < 0) {
+        errors.push(`Negative amount not allowed: \`${fruitLower}\``);
+        continue;
+      }
+
+      inventory[fruitLower].stock += amount;
+      updates.push(`${fruitLower} +${amount} → ${inventory[fruitLower].stock}`);
+    }
+
+    saveState();  // SAVE TO FILE
+    await updateShopDisplay(interaction.guild);
+
+    let response = '';
+    if (updates.length > 0) {
+      response += '✅ Updated:\n' + updates.map(u => `  • ${u}`).join('\n');
+    }
+    if (errors.length > 0) {
+      response += (updates.length > 0 ? '\n\n' : '') + '❌ Errors:\n' + errors.map(e => `  • ${e}`).join('\n');
+    }
+
+    return interaction.reply({ content: response || 'No changes made.', ephemeral: true });
+  }
   if (interaction.isChatInputCommand() && interaction.commandName === 'orders') {
     if (!isAdmin(interaction.member))
       return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
@@ -448,6 +595,53 @@ client.on(Events.InteractionCreate, async (interaction) => {
       .join('\n');
 
     return interaction.reply({ content: `**Pending Orders:**\n${list}`, ephemeral: true });
+  }
+
+  // ── /bulkorder ──────────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'bulkorder') {
+    const available = Object.entries(inventory).filter(([, v]) => getAvailableStock(v) > 0);
+    
+    if (available.length === 0) {
+      return interaction.reply({
+        content: 'Sorry, no fruits are currently in stock!',
+        ephemeral: true,
+      });
+    }
+
+    // Build list of available fruits for the modal description
+    const fruitList = available.map(([name, v]) => `${name} (${getAvailableStock(v)} available)`).join(', ');
+
+    const modal = new ModalBuilder()
+      .setCustomId(`bulkorder_modal:${interaction.user.id}:${Date.now()}`)
+      .setTitle('Order Multiple Fruits');
+
+    // Add text input for each available fruit (up to 5 max for modal limit)
+    const fieldsToShow = available.slice(0, 5);
+    
+    for (const [fruit, data] of fieldsToShow) {
+      const available_qty = getAvailableStock(data);
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(`qty_${fruit}`)
+            .setLabel(`${fruit} (${available_qty} available)`)
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('0')
+            .setRequired(false)
+            .setMaxLength(3)
+        )
+      );
+    }
+
+    // If more than 5 fruits, add a note
+    if (available.length > 5) {
+      return interaction.reply({
+        content: `⚠️ You have more than 5 fruits in stock. Please use the form for the first 5 or use separate orders:\n\n${fruitList}`,
+        ephemeral: true,
+      });
+    }
+
+    return interaction.showModal(modal);
   }
 
   // ── /closeticket ───────────────────────────
@@ -471,6 +665,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await ticketChannel.delete(`Ticket closed by ${interaction.user.tag}`);
       order.ticketChannelId = null;
       if (order.status === 'accepted') order.status = 'closed';
+      saveState();  // SAVE TO FILE
       return interaction.reply({ content: `✅ Ticket for ${orderId} has been closed.`, ephemeral: true });
     } catch (err) {
       console.error('❌ Could not delete ticket channel:', err);
@@ -829,6 +1024,193 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 
+  // ── Modal Submit: bulk order form ────────────
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('bulkorder_modal:')) {
+    try {
+      const items = [];
+      let total = 0;
+
+      // Collect quantities from modal inputs
+      for (const [fruit, data] of Object.entries(inventory)) {
+        try {
+          const qtyStr = interaction.fields.getTextInputValue(`qty_${fruit}`).trim();
+          if (!qtyStr || qtyStr === '0') continue;  // Skip if empty or 0
+
+          const qty = parseInt(qtyStr);
+          if (isNaN(qty) || qty <= 0) continue;
+
+          const available = getAvailableStock(data);
+          if (qty > available) {
+            return interaction.reply({
+              content: `❌ Only **${available}** ${fruit} left in stock. Adjust your quantity.`,
+              ephemeral: true,
+            });
+          }
+
+          items.push({ fruit, qty, price: data.price });
+          total += data.price * qty;
+        } catch {
+          // Field doesn't exist for this fruit, skip
+          continue;
+        }
+      }
+
+      // Check if at least one item was selected
+      if (items.length === 0) {
+        return interaction.reply({
+          content: '❌ Please enter at least one quantity greater than 0.',
+          ephemeral: true,
+        });
+      }
+
+      // Create order
+      const orderId = `ORD-${String(orderCounter++).padStart(4, '0')}`;
+      orders.set(orderId, {
+        orderId,
+        userId: interaction.user.id,
+        username: interaction.user.tag,
+        guildId: interaction.guild.id,
+        items,
+        total,
+        status: 'pending',
+        timestamp: new Date().toISOString(),
+      });
+      saveState();
+
+      // Reserve stock
+      for (const item of items) {
+        inventory[item.fruit].reserved = (inventory[item.fruit].reserved || 0) + item.qty;
+      }
+
+      // Post to receipts channel
+      const guild = interaction.guild;
+      await guild.channels.fetch();
+      const receiptsChannel = guild.channels.cache.find(c => c.name === CONFIG.RECEIPTS_CHANNEL && c.isTextBased());
+
+      if (receiptsChannel) {
+        const itemLines = items.map(it => `**${it.fruit}** × ${it.qty}  —  ₱${it.price * it.qty}`).join('\n');
+        
+        const orderEmbed = new EmbedBuilder()
+          .setTitle(`New Bulk Order — ${orderId}`)
+          .setColor(0xFFA500)
+          .setDescription(`**Items:**\n${itemLines}`)
+          .addFields(
+            { name: 'Customer', value: `<@${interaction.user.id}>\n${interaction.user.tag}`, inline: true },
+            { name: 'Total Amount', value: `₱${total}`, inline: true },
+          )
+          .setTimestamp()
+          .setFooter({ text: `Order ID: ${orderId}` });
+
+        try {
+          await receiptsChannel.send({
+            content: `New bulk order from <@${interaction.user.id}>. Accept the order to create a ticket, then deliver and confirm.`,
+            embeds: [orderEmbed],
+            components: [
+              new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`accept_order:${orderId}`).setLabel('Accept Order').setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId(`confirm_order:${orderId}`).setLabel('Mark Delivered').setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`cancel_order:${orderId}`).setLabel('Cancel Order').setStyle(ButtonStyle.Danger),
+              )
+            ],
+          });
+        } catch (sendErr) {
+          console.error(`Failed to post to #${CONFIG.RECEIPTS_CHANNEL}:`, sendErr.message);
+        }
+      }
+
+      await updateShopDisplay(interaction.guild, true);
+
+      // Show summary to buyer
+      const summary = items.map(it => `${it.fruit} × ${it.qty}`).join(', ');
+      return interaction.reply({
+        content: `✅ **Bulk order placed!**\n\n` +
+                 `Order ID: \`${orderId}\`\n` +
+                 `Items: ${summary}\n` +
+                 `Total: **₱${total}**\n\n` +
+                 `Admin will review and create a ticket for you shortly!`,
+        ephemeral: true,
+      });
+
+    } catch (err) {
+      console.error('Error handling bulkorder modal:', err);
+      if (!interaction.replied && !interaction.deferred) {
+        return interaction.reply({
+          content: '❌ Something went wrong. Please try again.',
+          ephemeral: true,
+        });
+      }
+    }
+  }
+
+  // ── Modal Submit: bulk stock update ──────────
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('bulkstock_modal:')) {
+    if (!isAdmin(interaction.member))
+      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+
+    try {
+      const updates = [];
+      const errors = [];
+
+      // Collect stock updates from modal inputs
+      for (const [fruit, data] of Object.entries(inventory)) {
+        try {
+          const stockStr = interaction.fields.getTextInputValue(`stock_${fruit}`).trim();
+          if (!stockStr) continue;  // Skip if empty
+
+          const newStock = parseInt(stockStr);
+          if (isNaN(newStock) || newStock < 0) {
+            errors.push(`Invalid amount for ${fruit}: must be a positive number`);
+            continue;
+          }
+
+          const oldStock = data.stock;
+          inventory[fruit].stock = newStock;
+          inventory[fruit].reserved = Math.min(inventory[fruit].reserved || 0, newStock);
+          
+          updates.push(`${fruit}: ${oldStock} → ${newStock}`);
+        } catch {
+          // Field doesn't exist for this fruit, skip
+          continue;
+        }
+      }
+
+      // Check if at least one fruit was updated
+      if (updates.length === 0 && errors.length === 0) {
+        return interaction.reply({
+          content: '❌ Please update at least one fruit stock.',
+          ephemeral: true,
+        });
+      }
+
+      // Save changes
+      saveState();
+      await updateShopDisplay(interaction.guild, true);
+
+      // Build response
+      let response = '';
+      if (updates.length > 0) {
+        response += '✅ **Stock Updated:**\n' + updates.map(u => `  • ${u}`).join('\n');
+      }
+      if (errors.length > 0) {
+        response += (updates.length > 0 ? '\n\n' : '') + '❌ **Errors:**\n' + errors.map(e => `  • ${e}`).join('\n');
+      }
+
+      return interaction.reply({
+        content: response,
+        ephemeral: true,
+      });
+
+    } catch (err) {
+      console.error('Error handling bulkstock modal:', err);
+      if (!interaction.replied && !interaction.deferred) {
+        return interaction.reply({
+          content: '❌ Something went wrong. Please try again.',
+          ephemeral: true,
+        });
+      }
+    }
+  }
+
   // ── Button: Admin accepts order and creates ticket ───────────
   if (interaction.isButton() && interaction.customId.startsWith('accept_order:')) {
     if (!isAdmin(interaction.member))
@@ -963,6 +1345,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
     }
 
+    saveState();  // SAVE TO FILE
+
     // Edit the receipts-channel embed to green
     const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
       .setColor(0x57F287)
@@ -1029,6 +1413,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       inventory[order.fruit].reserved = Math.max(0, (inventory[order.fruit].reserved || 0) - order.qty);
     }
     order.status = 'cancelled';
+    saveState();  // SAVE TO FILE
 
     const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
       .setColor(0xED4245)
