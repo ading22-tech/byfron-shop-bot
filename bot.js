@@ -454,7 +454,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     return interaction.reply({
-      content: `✅ Order **${orderId}** confirmed. Buyer has been notified via DM.`,
+      content: `✅ Order **${orderId}** confirmed. Buyer has been notified via DM @1mjustkael_ .`,
       ephemeral: true,
     });
   }
@@ -487,7 +487,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const buyerMember = await interaction.guild.members.fetch(order.userId);
       await buyerMember.send(
         `❌  Your order **${orderId}** (${order.fruit} × ${order.qty}) has been **cancelled**.\n` +
-        `If you believe this is a mistake, please DM @somin directly.`
+        `If you believe this is a mistake, please DM @1mjustkael_ directly.`
       );
     } catch { /* buyer has DMs off */ }
 
