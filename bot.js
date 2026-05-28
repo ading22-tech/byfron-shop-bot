@@ -397,11 +397,14 @@ const slashCommands = [
 async function registerSlashCommands(rest, guilds = client.guilds.cache) {
   const commandNames = slashCommands.map(command => `/${command.name}`).join(', ');
 
-  await rest.put(Routes.applicationCommands(client.user.id), { body: slashCommands });
-  console.log(`✅  Slash commands registered globally: ${commandNames}`);
+  await rest.put(Routes.applicationCommands(client.user.id), { body: [] });
+  console.log('Cleared global slash commands to prevent duplicate Discord entries.');
 
   const guildList = [...guilds.values()];
-  if (guildList.length === 0) return;
+  if (guildList.length === 0) {
+    console.warn('No guilds found; slash commands will register when the bot joins a server.');
+    return;
+  }
 
   for (const guild of guildList) {
     await rest.put(Routes.applicationGuildCommands(client.user.id, guild.id), { body: slashCommands });
