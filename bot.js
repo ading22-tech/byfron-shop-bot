@@ -79,6 +79,8 @@ function saveState() {
 // Store shop message ID for updating
 let lastShopMessageId = null;
 let lastShopChannelId = null;
+// Track last ping message per guild so we can remove it on next update
+const lastShopPingMessageId = new Map();
 // Load persisted state (order counter)
 loadState();
 
@@ -204,10 +206,21 @@ async function updateShopDisplay(guild, sendPing = true) {
       try {
         const resolved = resolveShopPingForGuild(guild);
         if (resolved) {
-          await channel.send({
+          // delete previous ping message if present
+          const prevId = lastShopPingMessageId.get(guild.id);
+          if (prevId) {
+            try {
+              const prevMsg = await channel.messages.fetch(prevId).catch(() => null);
+              if (prevMsg) await prevMsg.delete().catch(() => null);
+            } catch (e) { /* ignore deletion errors */ }
+          }
+
+          const pingMsg = await channel.send({
             content: `${resolved} Shop stock updated!`,
             allowedMentions: { parse: ['roles', 'everyone'] },
           });
+          // remember this ping so it can be removed on next update
+          lastShopPingMessageId.set(guild.id, pingMsg.id);
         }
       } catch (e) {
         console.warn('⚠️ Could not send shop update ping:', e.message);
@@ -302,11 +315,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!isAdmin(interaction.member))
       return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
 
-    const shopPing = resolveShopPing(interaction);
     const shopMessage = await interaction.channel.send({
-      content: shopPing ? `${shopPing} New shop update!` : undefined,
       embeds: [buildShopEmbed()],
-      allowedMentions: { parse: ['roles', 'everyone'] },
       components: [
         new ActionRowBuilder().addComponents(
           new ButtonBuilder()
