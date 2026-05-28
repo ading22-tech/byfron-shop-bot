@@ -26,6 +26,7 @@ const CONFIG = {
   ORDERS_CHANNEL:   'orders',       // channel where buyers send receipt screenshots
   VOUCH_CHANNEL:    'vouches',      // channel where vouches are posted
   ADMIN_ROLE:       'Admin',        // role name that can confirm/cancel
+  SHOP_PING:        '@members',     // mention to send before the shop embed (use @stock or @here if desired)
 };
 
 // ─────────────────────────────────────────────
@@ -64,11 +65,15 @@ function isAdmin(member) {
   );
 }
 
+function getAvailableStock(item) {
+  return Math.max(0, item.stock - (item.reserved || 0));
+}
+
 function buildShopEmbed() {
   const available = Object.entries(inventory)
     .map(([name, v]) => {
       const padding = ' '.repeat(Math.max(0, 12 - name.length));
-      return `${name}${padding} - ₱${v.price} [${v.stock}]`;
+      return `${name}${padding} - ₱${v.price} [${getAvailableStock(v)}]`;
     })
     .join('\n');
 
@@ -93,12 +98,11 @@ function buildShopEmbed() {
 
 function buildFruitMenu() {
   const options = Object.entries(inventory)
-    .filter(([, v]) => v.stock > 0)
+    .filter(([, v]) => getAvailableStock(v) > 0)
     .map(([name, v]) => ({
       label: `${name}  —  ₱${v.price}`,
-      description: `${v.stock} in stock`,
+      description: `${getAvailableStock(v)} in stock`,
       value: name,
-      
     }));
 
   return new ActionRowBuilder().addComponents(
@@ -224,6 +228,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
 
     const shopMessage = await interaction.channel.send({
+      content: CONFIG.SHOP_PING ? `${CONFIG.SHOP_PING} New shop update!` : undefined,
       embeds: [buildShopEmbed()],
       components: [
         new ActionRowBuilder().addComponents(
@@ -254,6 +259,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ content: `❌ Unknown fruit: \`${fruit}\``, ephemeral: true });
 
     inventory[fruit].stock = amount;
+    inventory[fruit].reserved = Math.min(inventory[fruit].reserved || 0, amount);
 
     // Update the shop display in real-time
     await updateShopDisplay(interaction.guild);
@@ -349,7 +355,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   // ── Button: "Order Now" ────────────────────
   if (interaction.isButton() && interaction.customId === 'start_order') {
-    const hasStock = Object.values(inventory).some(v => v.stock > 0);
+    const hasStock = Object.values(inventory).some(v => getAvailableStock(v) > 0);
     if (!hasStock)
       return interaction.reply({ content: 'All fruits are currently out of stock. Check back later!', ephemeral: true });
 
@@ -368,7 +374,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return interaction.reply({
       content:
         `You selected  **${fruit}**  — ₱${f.price}\n` +
-        `*(${f.stock} in stock)*\n\n` +
+        `*(${getAvailableStock(f)} in stock)*\n\n` +
         `**Step 2 of 2 —** Click below to fill in your order details.`,
       components: [
         new ActionRowBuilder().addComponents(
@@ -453,10 +459,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const accountInfo   = interaction.fields.getTextInputValue('account_info').trim();
       const reference     = interaction.fields.getTextInputValue('reference').trim();
       const gameUsername  = interaction.fields.getTextInputValue('game_username').trim();
+      const availableStock = getAvailableStock(f);
 
-      if (qty > f.stock) {
+      if (qty > availableStock) {
         return interaction.reply({
-          content: `❌ Only **${f.stock}** ${fruit} left in stock. Please adjust your quantity.`,
+          content: `❌ Only **${availableStock}** ${fruit} left in stock. Please adjust your quantity.`,
           ephemeral: true,
         });
       }
@@ -471,7 +478,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         status: 'pending', timestamp: new Date().toISOString(),
       });
 
-      inventory[fruit].stock -= qty;
+      f.reserved = (f.reserved || 0) + qty;
 
       // Post to admin receipts channel
       const guild           = interaction.guild;
@@ -505,13 +512,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         try {
           await receiptsChannel.send({
-            content: `New order from <@${interaction.user.id}>. Verify payment then confirm below.`,
+            content: `New order from <@${interaction.user.id}>. Verify payment, deliver the product, then mark it confirmed below.`,
             embeds: [orderEmbed],
             components: [
               new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                   .setCustomId(`confirm_order:${orderId}`)
-                  .setLabel('Confirm and Deliver')
+                  .setLabel('Mark Delivered')
                   .setStyle(ButtonStyle.Success),
                 new ButtonBuilder()
                   .setCustomId(`cancel_order:${orderId}`)
@@ -525,6 +532,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           console.error('   → Make sure the bot has Send Messages + View Channel permission in that channel.');
         }
       }
+
+      // Update the shop display to show reserved stock changes
+      await updateShopDisplay(interaction.guild);
 
       // Tell the buyer what to do next
       return interaction.reply({
@@ -565,6 +575,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     order.status      = 'confirmed';
     order.confirmedBy = interaction.user.tag;
 
+    const item = inventory[order.fruit];
+    if (item) {
+      item.stock    = Math.max(0, item.stock - order.qty);
+      item.reserved = Math.max(0, (item.reserved || 0) - order.qty);
+    }
+
     // Edit the receipts-channel embed to green
     const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
       .setColor(0x57F287)
@@ -582,12 +598,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await buyerMember.send({
         embeds: [
           new EmbedBuilder()
-            .setTitle('Your order has been confirmed!')
+            .setTitle('Your order has been delivered!')
             .setColor(0x57F287)
             .setDescription(
-              `Your payment was verified and your order is being delivered.\n` +
-              `Please **go online in Blox Fruits** and wait for the trade!\n\n` +
-              `Thank you for shopping at **byfron services** `
+              `Your payment was verified and your order has been delivered.\n` +
+              `Thank you for shopping at **byfron services**!` 
             )
             .addFields(
               { name: 'Order ID',      value: orderId,         inline: true },
@@ -627,8 +642,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (order.status !== 'pending')
       return interaction.reply({ content: `⚠️ Order is already **${order.status}**.`, ephemeral: true });
 
-    // Restore stock
-    if (inventory[order.fruit]) inventory[order.fruit].stock += order.qty;
+    // Release reserved stock for cancelled orders
+    if (inventory[order.fruit]) {
+      inventory[order.fruit].reserved = Math.max(0, (inventory[order.fruit].reserved || 0) - order.qty);
+    }
     order.status = 'cancelled';
 
     const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
