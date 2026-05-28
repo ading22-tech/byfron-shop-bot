@@ -69,6 +69,23 @@ function getAvailableStock(item) {
   return Math.max(0, item.stock - (item.reserved || 0));
 }
 
+function resolveShopPing(interaction) {
+  const ping = String(CONFIG.SHOP_PING || '').trim();
+  if (!ping || !interaction.guild) return undefined;
+
+  if (ping === '@everyone' || ping === '@here') return ping;
+  if (/^<@&\d+>$/.test(ping)) return ping;
+  if (/^\d+$/.test(ping)) return `<@&${ping}>`;
+
+  if (ping.startsWith('@')) {
+    const roleName = ping.slice(1).trim().toLowerCase();
+    const role = interaction.guild.roles.cache.find(r => r.name.toLowerCase() === roleName);
+    if (role) return `<@&${role.id}>`;
+  }
+
+  return ping;
+}
+
 function buildShopEmbed() {
   const available = Object.entries(inventory)
     .map(([name, v]) => {
@@ -227,9 +244,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!isAdmin(interaction.member))
       return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
 
+    const shopPing = resolveShopPing(interaction);
     const shopMessage = await interaction.channel.send({
-      content: CONFIG.SHOP_PING ? `${CONFIG.SHOP_PING} New shop update!` : undefined,
+      content: shopPing ? `${shopPing} New shop update!` : undefined,
       embeds: [buildShopEmbed()],
+      allowedMentions: { parse: ['roles', 'everyone'] },
       components: [
         new ActionRowBuilder().addComponents(
           new ButtonBuilder()
