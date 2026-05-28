@@ -172,6 +172,8 @@ function buildFruitMenu() {
     new StringSelectMenuBuilder()
       .setCustomId('select_fruit')
       .setPlaceholder('Choose a fruit…')
+      .setMinValues(1)
+      .setMaxValues(Math.min(5, options.length))
       .addOptions(options)
   );
 }
@@ -453,26 +455,50 @@ client.on(Events.InteractionCreate, async (interaction) => {
     });
   }
 
-  // ── Select Menu: fruit chosen ──────────────
+  // ── Select Menu: fruit chosen (supports multi-select) ──────────────
   if (interaction.isStringSelectMenu() && interaction.customId === 'select_fruit') {
-    const fruit = interaction.values[0];
-    const f     = inventory[fruit];
+    const selections = interaction.values; // array of fruit keys
+    // single selection: keep the existing friendly flow
+    if (selections.length === 1) {
+      const fruit = selections[0];
+      const f     = inventory[fruit];
 
-    return interaction.reply({
-      content:
-        `You selected  **${fruit}**  — ₱${f.price}\n` +
-        `*(${getAvailableStock(f)} in stock)*\n\n` +
-        `**Step 2 of 2 —** Click below to fill in your order details.`,
-      components: [
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`fill_order:${fruit}`)
-            .setLabel('Fill Order Form')
-            .setStyle(ButtonStyle.Primary)
-        )
-      ],
-      ephemeral: true,
-    });
+      return interaction.reply({
+        content:
+          `You selected  **${fruit}**  — ₱${f.price}\n` +
+          `*(${getAvailableStock(f)} in stock)*\n\n` +
+          `**Step 2 of 2 —** Click below to fill in your order details.`,
+        components: [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`fill_order:${fruit}`)
+              .setLabel('Fill Order Form')
+              .setStyle(ButtonStyle.Primary)
+          )
+        ],
+        ephemeral: true,
+      });
+    }
+
+    // multiple selection: open a modal to collect quantities for each selected fruit
+    const maxSelect = selections.length;
+    const modal = new ModalBuilder()
+      .setCustomId(`order_modal_multi:${selections.join(',')}`)
+      .setTitle(`Bulk Order (${selections.length} items)`);
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('items')
+          .setLabel('Items and quantities')
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder('Enter items and quantities, e.g. dragon:1, yeti:1 or dragon 1\nyeti 1')
+          .setRequired(true)
+          .setMaxLength(400)
+      )
+    );
+
+    return interaction.showModal(modal);
   }
 
   // ── Button: open order modal ───────────────
@@ -650,6 +676,118 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 
+  // ── Modal Submit: bulk order form ───────────────
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('order_modal_multi:')) {
+    try {
+      const selectionPart = interaction.customId.split(':')[1];
+      const selections = selectionPart.split(',').map(s => s.trim());
+
+      const raw = interaction.fields.getTextInputValue('items').trim();
+      // split by newline or comma
+      const tokens = raw.split(/[,\n]+/).map(t => t.trim()).filter(Boolean);
+      const quantities = {};
+      for (const tok of tokens) {
+        let [name, qty] = tok.split(':').map(x => x && x.trim());
+        if (!qty) {
+          // try whitespace separator
+          const parts = tok.split(/\s+/);
+          name = parts[0];
+          qty = parts[1];
+        }
+        if (!name || !qty) continue;
+        const key = name.toLowerCase();
+        const n = parseInt(qty, 10) || 0;
+        if (n > 0) quantities[key] = (quantities[key] || 0) + n;
+      }
+
+      // Validate all selections are present in quantities
+      for (const sel of selections) {
+        if (!quantities[sel]) {
+          return interaction.reply({ content: `❌ Missing quantity for **${sel}**. Follow the format: fruit:quantity`, ephemeral: true });
+        }
+      }
+
+      // Validate stock and compute total
+      let total = 0;
+      const items = [];
+      for (const sel of selections) {
+        const f = inventory[sel];
+        if (!f) return interaction.reply({ content: `❌ Unknown fruit: ${sel}`, ephemeral: true });
+        const qty = quantities[sel] || 0;
+        const available = getAvailableStock(f);
+        if (qty > available) return interaction.reply({ content: `❌ Only **${available}** ${sel} left in stock.`, ephemeral: true });
+        total += f.price * qty;
+        items.push({ fruit: sel, qty, price: f.price });
+      }
+
+      const orderId = `ORD-${String(orderCounter++).padStart(4, '0')}`;
+      orders.set(orderId, {
+        orderId, userId: interaction.user.id, username: interaction.user.tag,
+        guildId: interaction.guild.id,
+        items, total,
+        status: 'pending', timestamp: new Date().toISOString(),
+      });
+      try { saveState(); } catch (e) { }
+
+      // reserve stock for each item
+      for (const it of items) {
+        const obj = inventory[it.fruit];
+        obj.reserved = (obj.reserved || 0) + it.qty;
+      }
+
+      // Post to receipts channel similar to single order but list items
+      const guild = interaction.guild;
+      await guild.channels.fetch();
+      const receiptsChannel = guild.channels.cache.find(c => c.name === CONFIG.RECEIPTS_CHANNEL && c.isTextBased());
+      const ordersChannel = guild.channels.cache.find(c => c.name === CONFIG.ORDERS_CHANNEL && c.isTextBased());
+
+      if (receiptsChannel) {
+        const fields = [
+          { name: 'Customer', value: `<@${interaction.user.id}>\n${interaction.user.tag}`, inline: true },
+          { name: 'Payment', value: 'N/A', inline: true },
+        ];
+        // add item lines in description
+        const itemLines = items.map(it => `${it.fruit} × ${it.qty}  —  ₱${it.price * it.qty}`).join('\n');
+
+        const orderEmbed = new EmbedBuilder()
+          .setTitle(`New Bulk Order — ${orderId}`)
+          .setColor(0xFFA500)
+          .setDescription(itemLines)
+          .addFields(
+            ...fields,
+            { name: 'Total Amount', value: `₱${total}`, inline: true },
+          )
+          .setTimestamp()
+          .setFooter({ text: `Order ID: ${orderId}` });
+
+        try {
+          await receiptsChannel.send({
+            content: `New order from <@${interaction.user.id}>. Verify payment, deliver the product, then mark it confirmed below.`,
+            embeds: [orderEmbed],
+            components: [
+              new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`confirm_order:${orderId}`).setLabel('Mark Delivered').setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId(`cancel_order:${orderId}`).setLabel('Cancel Order').setStyle(ButtonStyle.Danger),
+              )
+            ],
+          });
+        } catch (sendErr) {
+          console.error(`❌ Failed to post to #${CONFIG.RECEIPTS_CHANNEL}:`, sendErr.message);
+        }
+      }
+
+      await updateShopDisplay(interaction.guild, true);
+
+      return interaction.reply({ content: `✅ Order placed! Order ID: \`${orderId}\` — Total: ₱${total}`, ephemeral: true });
+
+    } catch (err) {
+      console.error('❌ Error handling bulk order modal:', err);
+      if (!interaction.replied && !interaction.deferred) {
+        return interaction.reply({ content: '❌ Something went wrong saving your bulk order. Please try again.', ephemeral: true });
+      }
+    }
+  }
+
   // ── Button: Admin confirms order ───────────
   if (interaction.isButton() && interaction.customId.startsWith('confirm_order:')) {
     if (!isAdmin(interaction.member))
@@ -665,10 +803,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
     order.status      = 'confirmed';
     order.confirmedBy = interaction.user.tag;
 
-    const item = inventory[order.fruit];
-    if (item) {
-      item.stock    = Math.max(0, item.stock - order.qty);
-      item.reserved = Math.max(0, (item.reserved || 0) - order.qty);
+    // Commit reserved stock for each item in multi-item orders
+    if (Array.isArray(order.items)) {
+      for (const it of order.items) {
+        const item = inventory[it.fruit];
+        if (!item) continue;
+        item.stock = Math.max(0, item.stock - it.qty);
+        item.reserved = Math.max(0, (item.reserved || 0) - it.qty);
+      }
+    } else if (order.fruit) {
+      const item = inventory[order.fruit];
+      if (item) {
+        item.stock = Math.max(0, item.stock - order.qty);
+        item.reserved = Math.max(0, (item.reserved || 0) - order.qty);
+      }
     }
 
     // Edit the receipts-channel embed to green
@@ -685,28 +833,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // DM the buyer
     try {
       const buyerMember = await interaction.guild.members.fetch(order.userId);
+      const deliverEmbed = new EmbedBuilder()
+        .setTitle('Your order has been delivered!')
+        .setColor(0x57F287)
+        .setDescription(`Thank you for shopping at **byfron services**!`)
+        .addFields({ name: 'Order ID', value: orderId, inline: true });
+
+      if (Array.isArray(order.items)) {
+        const desc = order.items.map(it => `${it.fruit} × ${it.qty}`).join('\n');
+        deliverEmbed.addFields({ name: 'Items', value: desc, inline: false }, { name: 'Total', value: `₱${order.total}`, inline: true });
+      } else {
+        deliverEmbed.addFields({ name: 'Product', value: order.fruit || 'N/A', inline: true }, { name: 'In-Game Name', value: order.gameUsername || 'N/A', inline: true });
+      }
+
       await buyerMember.send({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle('Your order has been delivered!')
-            .setColor(0x57F287)
-            .setDescription(
-              `Your payment was verified and your order has been delivered.\n` +
-              `Thank you for shopping at **byfron services**!` 
-            )
-            .addFields(
-              { name: 'Order ID',      value: orderId,         inline: true },
-              { name: 'Fruit',         value: order.fruit,     inline: true },
-              { name: 'In-Game Name',  value: order.gameUsername, inline: true },
-            )
-            .setTimestamp()
-        ],
+        embeds: [deliverEmbed],
         components: [
           new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`vouch_order:${orderId}`)
-              .setLabel('Leave a Vouch')
-              .setStyle(ButtonStyle.Success)
+            new ButtonBuilder().setCustomId(`vouch_order:${orderId}`).setLabel('Leave a Vouch').setStyle(ButtonStyle.Success)
           )
         ]
       });
@@ -732,8 +876,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (order.status !== 'pending')
       return interaction.reply({ content: `⚠️ Order is already **${order.status}**.`, ephemeral: true });
 
-    // Release reserved stock for cancelled orders
-    if (inventory[order.fruit]) {
+    // Release reserved stock for cancelled orders (support multi-item)
+    if (Array.isArray(order.items)) {
+      for (const it of order.items) {
+        if (inventory[it.fruit]) inventory[it.fruit].reserved = Math.max(0, (inventory[it.fruit].reserved || 0) - it.qty);
+      }
+    } else if (inventory[order.fruit]) {
       inventory[order.fruit].reserved = Math.max(0, (inventory[order.fruit].reserved || 0) - order.qty);
     }
     order.status = 'cancelled';
@@ -751,11 +899,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // DM buyer
     try {
       const buyerMember = await interaction.guild.members.fetch(order.userId);
-      await buyerMember.send(
-        `❌  Your order **${orderId}** (${order.fruit} × ${order.qty}) has been **cancelled**.\n` +
-        `If you believe this is a mistake, please DM @1mjustkael_ directly.`
-      );
-
+      if (Array.isArray(order.items)) {
+        const desc = order.items.map(it => `${it.fruit} × ${it.qty}`).join('\n');
+        await buyerMember.send(
+          `❌  Your order **${orderId}** has been **cancelled**.\n\nItems:\n${desc}\n\nIf you believe this is a mistake, please DM @1mjustkael_ directly.`
+        );
+      } else {
+        await buyerMember.send(
+          `❌  Your order **${orderId}** (${order.fruit} × ${order.qty}) has been **cancelled**.\n` +
+          `If you believe this is a mistake, please DM @1mjustkael_ directly.`
+        );
+      }
 
     } catch { /* buyer has DMs off */ }
 
@@ -796,12 +950,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .setColor(0xFFD700)
         .addFields(
           { name: 'Buyer', value: `<@${order.userId}>`, inline: true },
-          { name: 'Product', value: order.fruit, inline: true },
-          { name: 'Quantity', value: `${order.qty}`, inline: true },
-          { name: 'Subtotal', value: `₱${order.total}`, inline: true },
         )
         .setTimestamp()
         .setFooter({ text: `Order ID: ${orderId}` });
+
+      if (Array.isArray(order.items)) {
+        const desc = order.items.map(it => `${it.fruit} × ${it.qty} — ₱${it.price * it.qty}`).join('\n');
+        vouchEmbed.addFields({ name: 'Products', value: desc, inline: false }, { name: 'Subtotal', value: `₱${order.total}`, inline: true });
+      } else {
+        vouchEmbed.addFields({ name: 'Product', value: order.fruit || 'N/A', inline: true }, { name: 'Quantity', value: `${order.qty || 0}`, inline: true }, { name: 'Subtotal', value: `₱${order.total || 0}`, inline: true });
+      }
 
       await vouchChannel.send({ embeds: [vouchEmbed] });
 
