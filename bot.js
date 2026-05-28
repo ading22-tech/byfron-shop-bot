@@ -892,10 +892,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const f     = inventory[fruit];
 
     const modal = new ModalBuilder()
-      .setCustomId(`order_modal:${fruit}`)
+      .setCustomId(`bulkorder_modal:${interaction.user.id}:${Date.now()}`)
       .setTitle(`Order: ${fruit}  (₱${f.price} each)`);
 
     modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('order_lines')
+          .setLabel('Fruit and quantity lines')
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder(`${fruit}, 1`)
+          .setValue(`${fruit}, 1`)
+          .setRequired(true)
+          .setMaxLength(1000)
+      ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId('game_username')
@@ -904,15 +914,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setPlaceholder('e.g. CoolPlayer123')
           .setRequired(true)
           .setMaxLength(50)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId('quantity')
-          .setLabel('Quantity (how many?)')
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder('e.g. 1')
-          .setRequired(true)
-          .setMaxLength(2)
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
