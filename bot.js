@@ -37,7 +37,7 @@ const inventory = {
   tiger:     { price: 55,  stock: 1 },
   buddha:    { price: 10,  stock: 3 },
   portal:    { price: 10,  stock: 3 },
-  dragon:    { price: 0,   stock: 0 },
+  dragon:    { price: 450,   stock: 0 },
   trex:      { price: 20,  stock: 1 },
   mammoth:   { price: 20,  stock: 3 },
   venom:     { price: 45,  stock: 2 },
