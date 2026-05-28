@@ -24,6 +24,7 @@ const CONFIG = {
   SHOP_CHANNEL:     'shop',         // channel where the shop embed lives
   RECEIPTS_CHANNEL: 'receipts',     // admin-only channel for incoming orders
   ORDERS_CHANNEL:   'orders',       // channel where buyers send receipt screenshots
+  VOUCH_CHANNEL:    'vouches',      // channel where vouches are posted
   ADMIN_ROLE:       'Admin',        // role name that can confirm/cancel
 };
 
@@ -159,6 +160,39 @@ const slashCommands = [
     .toJSON(),
 
   new SlashCommandBuilder()
+    .setName('addfruit')
+    .setDescription('Add a new fruit to the shop (Admin only)')
+    .addStringOption(o =>
+      o.setName('name').setDescription('Fruit name').setRequired(true)
+    )
+    .addIntegerOption(o =>
+      o.setName('price').setDescription('Fruit price in pesos').setRequired(true)
+    )
+    .addIntegerOption(o =>
+      o.setName('stock').setDescription('Initial stock amount').setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('editprice')
+    .setDescription('Edit fruit price (Admin only)')
+    .addStringOption(o =>
+      o.setName('fruit').setDescription('Fruit name').setRequired(true)
+    )
+    .addIntegerOption(o =>
+      o.setName('price').setDescription('New price in pesos').setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('removefruit')
+    .setDescription('Remove a fruit from the shop (Admin only)')
+    .addStringOption(o =>
+      o.setName('fruit').setDescription('Fruit name').setRequired(true)
+    )
+    .toJSON(),
+
+  new SlashCommandBuilder()
     .setName('orders')
     .setDescription('List all pending orders (Admin only)')
     .toJSON(),
@@ -226,6 +260,73 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     return interaction.reply({
       content: `✅ **${fruit}** stock updated to **${amount}**.`,
+      ephemeral: true,
+    });
+  }
+
+  // ── /addfruit ──────────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'addfruit') {
+    if (!isAdmin(interaction.member))
+      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+
+    const name  = interaction.options.getString('name').toLowerCase();
+    const price = interaction.options.getInteger('price');
+    const stock = interaction.options.getInteger('stock');
+
+    if (inventory[name])
+      return interaction.reply({ content: `❌ **${name}** already exists in inventory!`, ephemeral: true });
+
+    inventory[name] = { price, stock };
+
+    // Update the shop display in real-time
+    await updateShopDisplay(interaction.guild);
+
+    return interaction.reply({
+      content: `✅ **${name}** added to shop! Price: ₱${price} | Stock: ${stock}`,
+      ephemeral: true,
+    });
+  }
+
+  // ── /editprice ─────────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'editprice') {
+    if (!isAdmin(interaction.member))
+      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+
+    const fruit = interaction.options.getString('fruit').toLowerCase();
+    const price = interaction.options.getInteger('price');
+
+    if (!inventory[fruit])
+      return interaction.reply({ content: `❌ Unknown fruit: \`${fruit}\``, ephemeral: true });
+
+    const oldPrice = inventory[fruit].price;
+    inventory[fruit].price = price;
+
+    // Update the shop display in real-time
+    await updateShopDisplay(interaction.guild);
+
+    return interaction.reply({
+      content: `✅ **${fruit}** price updated: ₱${oldPrice} → ₱${price}`,
+      ephemeral: true,
+    });
+  }
+
+  // ── /removefruit ───────────────────────────
+  if (interaction.isChatInputCommand() && interaction.commandName === 'removefruit') {
+    if (!isAdmin(interaction.member))
+      return interaction.reply({ content: '❌ Admins only.', ephemeral: true });
+
+    const fruit = interaction.options.getString('fruit').toLowerCase();
+
+    if (!inventory[fruit])
+      return interaction.reply({ content: `❌ Unknown fruit: \`${fruit}\``, ephemeral: true });
+
+    delete inventory[fruit];
+
+    // Update the shop display in real-time
+    await updateShopDisplay(interaction.guild);
+
+    return interaction.reply({
+      content: `✅ **${fruit}** removed from shop.`,
       ephemeral: true,
     });
   }
@@ -493,6 +594,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
               { name: 'In-Game Name',  value: order.gameUsername, inline: true },
             )
             .setTimestamp()
+        ],
+        components: [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`vouch_order:${orderId}`)
+              .setLabel('Leave a Vouch')
+              .setStyle(ButtonStyle.Success)
+          )
         ]
       });
     } catch {
@@ -538,6 +647,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         `❌  Your order **${orderId}** (${order.fruit} × ${order.qty}) has been **cancelled**.\n` +
         `If you believe this is a mistake, please DM @1mjustkael_ directly.`
       );
+
+
     } catch { /* buyer has DMs off */ }
 
     return interaction.reply({
@@ -546,6 +657,52 @@ client.on(Events.InteractionCreate, async (interaction) => {
     });
   }
 
-});
+  // ── Button: Leave a vouch ─────────────────
+  if (interaction.isButton() && interaction.customId.startsWith('vouch_order:')) {
+    const orderId = interaction.customId.split(':')[1];
+    const order   = orders.get(orderId);
 
+    if (!order)
+      return interaction.reply({ content: '❌ Order not found.', ephemeral: true });
+
+    try {
+      const vouchChannel = interaction.guild.channels.cache.find(
+        c => c.name === CONFIG.VOUCH_CHANNEL && c.isTextBased()
+      );
+
+      if (!vouchChannel) {
+        return interaction.reply({
+          content: `❌ Vouch channel (#${CONFIG.VOUCH_CHANNEL}) not found. Contact an admin.`,
+          ephemeral: true,
+        });
+      }
+
+      const vouchEmbed = new EmbedBuilder()
+        .setTitle('⭐ New Vouch')
+        .setColor(0xFFD700)
+        .addFields(
+          { name: 'Buyer', value: `<@${order.userId}>`, inline: true },
+          { name: 'Product', value: order.fruit, inline: true },
+          { name: 'Quantity', value: `${order.qty}`, inline: true },
+          { name: 'Subtotal', value: `₱${order.total}`, inline: true },
+        )
+        .setTimestamp()
+        .setFooter({ text: `Order ID: ${orderId}` });
+
+      await vouchChannel.send({ embeds: [vouchEmbed] });
+
+      return interaction.reply({
+        content: '✅ Thank you for your vouch! It has been posted.',
+        ephemeral: true,
+      });
+    } catch (err) {
+      console.error('❌ Error posting vouch:', err);
+      return interaction.reply({
+        content: '❌ Failed to post vouch. Please try again.',
+        ephemeral: true,
+      });
+    }
+  }
+
+});
 client.login(process.env.DISCORD_TOKEN);
