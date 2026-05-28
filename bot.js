@@ -6,6 +6,9 @@ const {
 } = require('discord.js');
 
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
+const STATE_FILE = path.join(__dirname, 'bot_state.json');
 
 const client = new Client({
   intents: [
@@ -51,9 +54,33 @@ const inventory = {
 const orders = new Map();
 let orderCounter = 1;
 
+function loadState() {
+  try {
+    if (!fs.existsSync(STATE_FILE)) return;
+    const raw = fs.readFileSync(STATE_FILE, 'utf8');
+    const s = JSON.parse(raw || '{}');
+    if (s.orderCounter && Number.isInteger(s.orderCounter) && s.orderCounter > 0) {
+      orderCounter = s.orderCounter;
+    }
+  } catch (e) {
+    console.warn('⚠️ Could not load state file:', e.message);
+  }
+}
+
+function saveState() {
+  try {
+    const s = { orderCounter };
+    fs.writeFileSync(STATE_FILE, JSON.stringify(s), 'utf8');
+  } catch (e) {
+    console.warn('⚠️ Could not save state file:', e.message);
+  }
+}
+
 // Store shop message ID for updating
 let lastShopMessageId = null;
 let lastShopChannelId = null;
+// Load persisted state (order counter)
+loadState();
 
 // ─────────────────────────────────────────────
 //  HELPERS
@@ -80,6 +107,23 @@ function resolveShopPing(interaction) {
   if (ping.startsWith('@')) {
     const roleName = ping.slice(1).trim().toLowerCase();
     const role = interaction.guild.roles.cache.find(r => r.name.toLowerCase() === roleName);
+    if (role) return `<@&${role.id}>`;
+  }
+
+  return ping;
+}
+
+function resolveShopPingForGuild(guild) {
+  const ping = String(CONFIG.SHOP_PING || '').trim();
+  if (!ping || !guild) return undefined;
+
+  if (ping === '@everyone' || ping === '@here') return ping;
+  if (/^<@&\d+>$/.test(ping)) return ping;
+  if (/^\d+$/.test(ping)) return `<@&${ping}>`;
+
+  if (ping.startsWith('@')) {
+    const roleName = ping.slice(1).trim().toLowerCase();
+    const role = guild.roles.cache.find(r => r.name.toLowerCase() === roleName);
     if (role) return `<@&${role.id}>`;
   }
 
@@ -131,7 +175,7 @@ function buildFruitMenu() {
 }
 
 // Update the shop embed in the channel (edit existing message instead of posting new ones)
-async function updateShopDisplay(guild) {
+async function updateShopDisplay(guild, sendPing = true) {
   try {
     if (!lastShopChannelId || !lastShopMessageId) return; // No shop message to update
 
@@ -155,6 +199,20 @@ async function updateShopDisplay(guild) {
       embeds: [shopEmbed],
       components: shopComponents,
     });
+    
+    if (sendPing && CONFIG.SHOP_PING) {
+      try {
+        const resolved = resolveShopPingForGuild(guild);
+        if (resolved) {
+          await channel.send({
+            content: `${resolved} Shop stock updated!`,
+            allowedMentions: { parse: ['roles', 'everyone'] },
+          });
+        }
+      } catch (e) {
+        console.warn('⚠️ Could not send shop update ping:', e.message);
+      }
+    }
   } catch (err) {
     console.warn('⚠️ Could not update shop display:', err.message);
   }
@@ -280,8 +338,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     inventory[fruit].stock = amount;
     inventory[fruit].reserved = Math.min(inventory[fruit].reserved || 0, amount);
 
-    // Update the shop display in real-time
-    await updateShopDisplay(interaction.guild);
+    // Update the shop display in real-time (ping because stock changed via delivery)
+    await updateShopDisplay(interaction.guild, true);
 
     return interaction.reply({
       content: `✅ **${fruit}** stock updated to **${amount}**.`,
@@ -497,6 +555,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         status: 'pending', timestamp: new Date().toISOString(),
       });
 
+      // persist updated orderCounter to disk so sequence survives restarts
+      try { saveState(); } catch (e) { /* swallow */ }
+
       f.reserved = (f.reserved || 0) + qty;
 
       // Post to admin receipts channel
@@ -552,8 +613,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
       }
 
-      // Update the shop display to show reserved stock changes
-      await updateShopDisplay(interaction.guild);
+      // Update the shop display to show reserved stock changes and ping if configured
+      await updateShopDisplay(interaction.guild, true);
 
       // Tell the buyer what to do next
       return interaction.reply({
